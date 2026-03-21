@@ -1,0 +1,11 @@
+go 1.25.0
+
+use (
+	./services/api-gateway
+	./services/auth-service
+	./services/billing-service
+	./services/finops-service
+	./shared/config
+	./shared/database
+	./shared/redis
+)

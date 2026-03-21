@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: finops-config
+  namespace: finops-platform
+data:
+  DB_HOST: "mysql"
+  DB_PORT: "3306"
+  DB_NAME: "finops_platform"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  AUTH_SERVICE_URL: "http://auth-service:8081"
+  BILLING_SERVICE_URL: "http://billing-service:8082"
+  FINOPS_SERVICE_URL: "http://finops-service:8083"
+  AI_QUERY_ENGINE_URL: "http://ai-query-engine:8084"

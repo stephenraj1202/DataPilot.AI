@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finops-service
+  namespace: finops-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: finops-service
+  template:
+    metadata:
+      labels:
+        app: finops-service
+    spec:
+      containers:
+        - name: finops-service
+          image: ghcr.io/your-org/finops-finops-service:latest
+          ports:
+            - containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: finops-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finops-service
+  namespace: finops-platform
+spec:
+  type: ClusterIP
+  selector:
+    app: finops-service
+  ports:
+    - port: 8083
+      targetPort: 8083

@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: finops-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: finops_platform
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - finops-network
+
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: finops-api-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - CONFIG_PATH=/app/config.ini
+    volumes:
+      - ./config.ini:/app/config.ini
+    networks:
+      - finops-network
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: finops-auth-service
+    ports:
+      - "8081:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - CONFIG_PATH=/app/config.ini
+    volumes:
+      - ./config.ini:/app/config.ini
+    networks:
+      - finops-network
+
+  billing-service:
+    build:
+      context: .
+      dockerfile: services/billing-service/Dockerfile
+    container_name: finops-billing-service
+    ports:
+      - "8082:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - CONFIG_PATH=/app/config.ini
+    volumes:
+      - ./config.ini:/app/config.ini
+    networks:
+      - finops-network
+
+  finops-service:
+    build:
+      context: .
+      dockerfile: services/finops-service/Dockerfile
+    container_name: finops-finops-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - CONFIG_PATH=/app/config.ini
+    volumes:
+      - ./config.ini:/app/config.ini
+    networks:
+      - finops-network
+
+  ai-query-engine:
+    build:
+      context: .
+      dockerfile: services/ai-query-engine/Dockerfile
+    container_name: finops-ai-query-engine
+    ports:
+      - "8084:8084"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - services/ai-query-engine/.env
+    networks:
+      - finops-network
+
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: finops-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - finops-network
+
+volumes:
+  mysql_data:
+
+networks:
+  finops-network:
+    driver: bridge
