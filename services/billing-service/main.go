@@ -79,6 +79,20 @@ func main() {
 		log.Printf("Warning: failed to create UBB tables: %v", err)
 	}
 
+	// Backfill sub_item_price_cents for existing streams (runs once, fast)
+	go handlers.SyncSubItemPrices(db.DB)
+
+	// Daily goroutine: snapshot active stream usage into ubb_billed_revenue
+	go func() {
+		// Run once immediately at startup, then every 24 hours
+		handlers.SnapshotBilledRevenue(db.DB)
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			handlers.SnapshotBilledRevenue(db.DB)
+		}
+	}()
+
 	// Initialize Gin router
 	router := gin.Default()
 
@@ -117,6 +131,7 @@ func main() {
 		billing.POST("/ubb/invoice/pay", ubbHandler.PayUBBInvoice)
 		billing.GET("/ubb/subscription-items", ubbHandler.GetSubscriptionItems)
 		billing.GET("/ubb/next-bill", ubbHandler.GetNextBillSummary)
+		billing.POST("/ubb/revenue/snapshot", ubbHandler.SnapshotRevenue)
 	}
 
 	// Start server

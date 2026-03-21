@@ -88,7 +88,8 @@ func EnsureUBBTable(db *sql.DB) error {
 			stripe_invoice_id   VARCHAR(255)  NOT NULL DEFAULT '',
 			created_at          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			INDEX idx_rev_account (account_id),
-			INDEX idx_rev_period  (account_id, billing_period)
+			INDEX idx_rev_period  (account_id, billing_period),
+			UNIQUE KEY uq_stream_period (stream_id, billing_period)
 		)`,
 	}
 	for _, s := range stmts {
@@ -100,6 +101,43 @@ func EnsureUBBTable(db *sql.DB) error {
 }
 
 // ── Request / Response types ──────────────────────────────────────────────────
+
+// SyncSubItemPrices backfills sub_item_price_cents for existing streams that have
+// sub_item_price_cents=0 but a real Stripe sub item. Called once at startup.
+// This fixes streams created before the sub_item_price_cents column was added.
+func SyncSubItemPrices(db *sql.DB) {
+	rows, err := db.Query(
+		`SELECT id, stripe_sub_item_id FROM ubb_streams
+		 WHERE deleted_at IS NULL AND stripe_sub_item_id != '' AND sub_item_price_cents = 0`,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	type row struct{ id, subItemID string }
+	var toSync []row
+	for rows.Next() {
+		var r row
+		if rows.Scan(&r.id, &r.subItemID) == nil {
+			toSync = append(toSync, r)
+		}
+	}
+
+	for _, r := range toSync {
+		si, err := subscriptionitem.Get(r.subItemID, nil)
+		if err != nil || si.Price == nil {
+			continue
+		}
+		unitAmount := si.Price.UnitAmount
+		if unitAmount > 0 {
+			_, _ = db.Exec(
+				`UPDATE ubb_streams SET sub_item_price_cents=? WHERE id=?`,
+				unitAmount, r.id,
+			)
+		}
+	}
+}
 
 type createStreamRequest struct {
 	StreamName        string `json:"stream_name" binding:"required"`
@@ -258,12 +296,15 @@ func (h *UBBHandler) DeleteStream(c *gin.Context) {
 	periodStart, periodEnd := h.currentBillingPeriod(accountID)
 	totalUnits, _ := h.resolvedUsage(subItemID, streamID, subItemPriceCents, periodStart, periodEnd)
 
-	// Snapshot overage into permanent revenue ledger
-	overageUnits := int64(0)
-	if totalUnits > includedUnits {
-		overageUnits = totalUnits - includedUnits
+	// Snapshot billed amount into permanent revenue ledger (new model: no free-tier deduction)
+	var billedCents int64
+	if subItemID != "" && subItemPriceCents > 0 {
+		// Stripe stream: all units billed at sub_item_price_cents
+		billedCents = totalUnits * subItemPriceCents
+	} else {
+		// Local stream: all units billed at overage_price_cents (no free-tier)
+		billedCents = totalUnits * overagePriceCents
 	}
-	overageCents := overageUnits * overagePriceCents
 	now := time.Now()
 	billingPeriod := fmt.Sprintf("%d-%02d", now.Year(), int(now.Month()))
 
@@ -271,9 +312,13 @@ func (h *UBBHandler) DeleteStream(c *gin.Context) {
 		`INSERT INTO ubb_billed_revenue
 		 (id, account_id, stream_id, stream_name, total_units, included_units,
 		  overage_units, overage_price_cents, overage_cents, billing_period)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE
+		   total_units=VALUES(total_units),
+		   overage_units=VALUES(overage_units),
+		   overage_cents=VALUES(overage_cents)`,
 		uuid.New().String(), accountID, streamID, streamName,
-		totalUnits, includedUnits, overageUnits, overagePriceCents, overageCents, billingPeriod,
+		totalUnits, includedUnits, totalUnits, overagePriceCents, billedCents, billingPeriod,
 	)
 
 	// Soft-delete the stream
@@ -291,9 +336,9 @@ func (h *UBBHandler) DeleteStream(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"message":       "stream deleted",
-		"snapshotted":   true,
-		"overage_cents": overageCents,
+		"message":      "stream deleted",
+		"snapshotted":  true,
+		"billed_cents": billedCents,
 	})
 }
 
@@ -428,14 +473,17 @@ func (h *UBBHandler) GetUsageSummary(c *gin.Context) {
 	// Current billing period boundaries from the active subscription
 	periodStart, periodEnd := h.currentBillingPeriod(accountID)
 
-	// resolvedUsage: local is authoritative when sub item has $0/unit price
+	// resolvedUsage: Stripe is authoritative when sub item has real price
 	total, source := h.resolvedUsage(subItemID, streamID, int64(subItemPriceCents), periodStart, periodEnd)
 
-	// Expose raw local/stripe counts for the debug row in the UI
+	// Expose raw counts for the debug row in the UI
 	localTotal := h.localUsageForPeriod(streamID, periodStart, periodEnd)
 	stripeTotal := int64(0)
 	if source == "stripe" {
 		stripeTotal = total
+	} else if subItemID != "" && int64(subItemPriceCents) > 0 {
+		// source=local means Stripe returned 0, show that explicitly
+		stripeTotal = stripeUsageForPeriod(subItemID, periodStart, periodEnd)
 	}
 
 	overage := int64(0)
@@ -747,9 +795,15 @@ func (h *UBBHandler) RefreshStreamSubItem(c *gin.Context) {
 }
 
 // DryRunInvoice GET /billing/ubb/invoice/dryrun
-// Builds a full invoice breakdown locally. Uses Stripe summaries (current period)
-// for streams that have a sub item; local events for the rest. Never mixes sources
-// for the same stream.
+// Builds a full invoice breakdown locally.
+//
+// Billing model:
+//   - Stripe-billed streams (sub_item_price_cents > 0, source="stripe"):
+//     Stripe charges ALL metered units at the per-unit price — no free-tier
+//     deduction. Amount = usage × unit_price_cents. included_units is shown
+//     for reference only.
+//   - Local-billed streams (no sub item or legacy $0 sub item, source="local"):
+//     Apply the local free tier. Amount = max(0, usage - included_units) × overage_price_cents.
 func (h *UBBHandler) DryRunInvoice(c *gin.Context) {
 	accountID := c.GetHeader("X-Account-ID")
 	if accountID == "" {
@@ -820,20 +874,27 @@ func (h *UBBHandler) DryRunInvoice(c *gin.Context) {
 	for _, s := range streams {
 		usage, source := h.resolvedUsage(s.SubItemID, s.ID, s.SubItemPriceCents, periodStart, periodEnd)
 
-		overageUnits := int64(0)
-		if usage > s.IncludedUnits {
-			overageUnits = usage - s.IncludedUnits
+		var billedCents int64
+		var overageUnits int64
+
+		if source == "stripe" {
+			// Stripe: all units billed at sub_item_price_cents (no free-tier deduction)
+			billedCents = usage * s.SubItemPriceCents
+			overageUnits = usage
+		} else {
+			// Local: all units billed at overage_price_cents (no free-tier deduction)
+			billedCents = usage * s.OveragePriceCents
+			overageUnits = usage
 		}
-		overageCents := overageUnits * s.OveragePriceCents
-		totalOverageCents += overageCents
+		totalOverageCents += billedCents
 
 		lines = append(lines, lineItem{
 			Description:   fmt.Sprintf("%s — usage this period", s.Name),
-			AmountUSD:     float64(overageCents) / 100.0,
+			AmountUSD:     float64(billedCents) / 100.0,
 			Units:         usage,
 			IncludedUnits: s.IncludedUnits,
 			OverageUnits:  overageUnits,
-			IsOverage:     overageUnits > 0,
+			IsOverage:     billedCents > 0,
 			Source:        source,
 		})
 	}
@@ -841,18 +902,23 @@ func (h *UBBHandler) DryRunInvoice(c *gin.Context) {
 	now := time.Now()
 	totalCents := flatFeeCents + totalOverageCents
 
-	// Add deleted stream revenue for this billing period (not yet invoiced)
+	// Add deleted stream revenue for this billing period (not yet invoiced).
+	// Only include rows where the stream has actually been deleted — active stream
+	// rows in ubb_billed_revenue are already counted in the per-stream loop above.
 	billingPeriod := fmt.Sprintf("%d-%02d", now.Year(), int(now.Month()))
 	var deletedRevenueCents int64
 	_ = h.DB.QueryRow(
-		`SELECT COALESCE(SUM(overage_cents),0) FROM ubb_billed_revenue
-		 WHERE account_id=? AND billing_period=? AND stripe_invoiced=0`,
+		`SELECT COALESCE(SUM(r.overage_cents),0)
+		 FROM ubb_billed_revenue r
+		 JOIN ubb_streams s ON s.id = r.stream_id
+		 WHERE r.account_id=? AND r.billing_period=? AND r.stripe_invoiced=0
+		   AND s.deleted_at IS NOT NULL`,
 		accountID, billingPeriod,
 	).Scan(&deletedRevenueCents)
 
 	if deletedRevenueCents > 0 {
 		lines = append(lines, lineItem{
-			Description: "Deleted streams — accrued usage (this period)",
+			Description: "Deleted streams — usage charges (this period)",
 			AmountUSD:   float64(deletedRevenueCents) / 100.0,
 			IsOverage:   true,
 			Source:      "local",
@@ -908,7 +974,9 @@ func (h *UBBHandler) GetNextBillSummary(c *gin.Context) {
 	billingPeriod := fmt.Sprintf("%d-%02d", now.Year(), int(now.Month()))
 	periodStart, periodEnd := h.currentBillingPeriod(accountID)
 
-	// Active stream overages
+	// Active stream overages — mirror DryRunInvoice billing model:
+	// Stripe streams: ALL units × sub_item_price_cents (no free-tier deduction)
+	// Local streams:  max(0, usage - included_units) × overage_price_cents
 	var activeOverageCents int64
 	rows, _ := h.DB.Query(
 		`SELECT id, stripe_sub_item_id, included_units, overage_price_cents, sub_item_price_cents
@@ -923,18 +991,26 @@ func (h *UBBHandler) GetNextBillSummary(c *gin.Context) {
 			if rows.Scan(&sid, &subItemID, &included, &priceCents, &subItemPriceCents) != nil {
 				continue
 			}
-			usage, _ := h.resolvedUsage(subItemID, sid, subItemPriceCents, periodStart, periodEnd)
-			if usage > included {
-				activeOverageCents += (usage - included) * priceCents
+			usage, source := h.resolvedUsage(subItemID, sid, subItemPriceCents, periodStart, periodEnd)
+			if source == "stripe" {
+				activeOverageCents += usage * subItemPriceCents
+			} else {
+				// Local: all units billed at overage_price_cents (no free-tier deduction)
+				activeOverageCents += usage * priceCents
 			}
 		}
 	}
 
-	// Deleted stream revenue for this billing period (not yet invoiced)
+	// Deleted stream revenue for this billing period (not yet invoiced).
+	// Only rows where the stream is actually deleted — active stream rows are already
+	// counted in the activeOverageCents loop above.
 	var deletedRevenueCents int64
 	_ = h.DB.QueryRow(
-		`SELECT COALESCE(SUM(overage_cents),0) FROM ubb_billed_revenue
-		 WHERE account_id=? AND billing_period=? AND stripe_invoiced=0`,
+		`SELECT COALESCE(SUM(r.overage_cents),0)
+		 FROM ubb_billed_revenue r
+		 JOIN ubb_streams s ON s.id = r.stream_id
+		 WHERE r.account_id=? AND r.billing_period=? AND r.stripe_invoiced=0
+		   AND s.deleted_at IS NOT NULL`,
 		accountID, billingPeriod,
 	).Scan(&deletedRevenueCents)
 
@@ -1145,6 +1221,79 @@ func (h *UBBHandler) PayUBBInvoice(c *gin.Context) {
 	})
 }
 
+// SnapshotBilledRevenue upserts the current-period usage for all active streams
+// into ubb_billed_revenue. Called periodically (daily goroutine) and on demand
+// via POST /billing/ubb/revenue/snapshot. This ensures the revenue ledger is
+// always up-to-date even for streams that haven't been deleted yet.
+func SnapshotBilledRevenue(db *sql.DB) {
+	// Fetch all active streams grouped by account
+	rows, err := db.Query(
+		`SELECT id, account_id, stream_name, stripe_sub_item_id,
+		        included_units, overage_price_cents, sub_item_price_cents
+		 FROM ubb_streams WHERE deleted_at IS NULL`,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	h := &UBBHandler{DB: db}
+
+	type streamRow struct {
+		id, accountID, name, subItemID          string
+		included, priceCents, subItemPriceCents int64
+	}
+	var streams []streamRow
+	for rows.Next() {
+		var s streamRow
+		if rows.Scan(&s.id, &s.accountID, &s.name, &s.subItemID,
+			&s.included, &s.priceCents, &s.subItemPriceCents) == nil {
+			streams = append(streams, s)
+		}
+	}
+
+	now := time.Now()
+	billingPeriod := fmt.Sprintf("%d-%02d", now.Year(), int(now.Month()))
+
+	for _, s := range streams {
+		periodStart, periodEnd := h.currentBillingPeriod(s.accountID)
+		usage, _ := h.resolvedUsage(s.subItemID, s.id, s.subItemPriceCents, periodStart, periodEnd)
+
+		var overageUnits, overageCents int64
+		if s.subItemID != "" && s.subItemPriceCents > 0 {
+			// Stripe stream: all units billed at sub_item_price_cents (no free-tier)
+			overageUnits = usage
+			overageCents = usage * s.subItemPriceCents
+		} else {
+			// Local stream: all units billed at overage_price_cents (no free-tier deduction)
+			overageUnits = usage
+			overageCents = usage * s.priceCents
+		}
+
+		// Upsert: one row per (stream_id, billing_period). Use stream_id+period as natural key.
+		_, _ = db.Exec(
+			`INSERT INTO ubb_billed_revenue
+			 (id, account_id, stream_id, stream_name, total_units, included_units,
+			  overage_units, overage_price_cents, overage_cents, billing_period)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE
+			   total_units=VALUES(total_units),
+			   overage_units=VALUES(overage_units),
+			   overage_cents=VALUES(overage_cents),
+			   stream_name=VALUES(stream_name)`,
+			uuid.New().String(), s.accountID, s.id, s.name,
+			usage, s.included, overageUnits, s.priceCents, overageCents, billingPeriod,
+		)
+	}
+}
+
+// SnapshotRevenue POST /billing/ubb/revenue/snapshot
+// Manually triggers SnapshotBilledRevenue for the calling account (or all accounts for admins).
+func (h *UBBHandler) SnapshotRevenue(c *gin.Context) {
+	go SnapshotBilledRevenue(h.DB)
+	c.JSON(http.StatusOK, gin.H{"message": "snapshot triggered"})
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // resolveStripeContextForStream finds the Stripe customer and picks an UNUSED
@@ -1289,21 +1438,27 @@ func (h *UBBHandler) usageAlreadyRecorded(streamID, idemKey string) bool {
 
 // currentBillingPeriod returns unix timestamps for the start and end of the
 // account's active Stripe subscription period. Falls back to calendar month.
+//
+// IMPORTANT: We use UNIX_TIMESTAMP() in SQL to avoid Go's timezone
+// interpretation of MySQL DATETIME columns. sql.NullTime scans DATETIME as
+// local time, causing .Unix() to be off by the server's UTC offset (e.g.
+// +5:30 IST = 19800 s), which shifts the period window and excludes events
+// that were legitimately recorded within the period.
 func (h *UBBHandler) currentBillingPeriod(accountID string) (start, end int64) {
-	var periodStart, periodEnd sql.NullTime
+	var periodStart, periodEnd sql.NullInt64
 	_ = h.DB.QueryRow(
-		`SELECT current_period_start, current_period_end
+		`SELECT UNIX_TIMESTAMP(current_period_start), UNIX_TIMESTAMP(current_period_end)
 		 FROM stripe_subscriptions
 		 WHERE account_id=? AND status IN ('active','trialing') AND deleted_at IS NULL
 		 ORDER BY created_at DESC LIMIT 1`,
 		accountID,
 	).Scan(&periodStart, &periodEnd)
 
-	if periodStart.Valid && periodEnd.Valid {
-		return periodStart.Time.Unix(), periodEnd.Time.Unix()
+	if periodStart.Valid && periodEnd.Valid && periodStart.Int64 > 0 {
+		return periodStart.Int64, periodEnd.Int64
 	}
 
-	// Fallback: calendar month
+	// Fallback: calendar month in UTC
 	now := time.Now().UTC()
 	s := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	e := s.AddDate(0, 1, 0)
@@ -1372,6 +1527,26 @@ func stripePrice(params *stripe.PriceParams) (string, error) {
 	return p.ID, nil
 }
 
+// stripeUsageForPeriod queries Stripe usage record summaries for a sub item within a period.
+// Returns 0 if no sub item or Stripe returns nothing.
+func stripeUsageForPeriod(subItemID string, periodStart, periodEnd int64) int64 {
+	if subItemID == "" {
+		return 0
+	}
+	params := &stripe.UsageRecordSummaryListParams{
+		SubscriptionItem: stripe.String(subItemID),
+	}
+	var total int64
+	iter := usagerecordsummary.List(params)
+	for iter.Next() {
+		s := iter.UsageRecordSummary()
+		if s.Period.Start >= periodStart && s.Period.Start < periodEnd {
+			total += s.TotalUsage
+		}
+	}
+	return total
+}
+
 // localUsageForPeriod returns the sum of usage events for a stream within a period.
 func (h *UBBHandler) localUsageForPeriod(streamID string, periodStart, periodEnd int64) int64 {
 	var total int64
@@ -1384,29 +1559,26 @@ func (h *UBBHandler) localUsageForPeriod(streamID string, periodStart, periodEnd
 }
 
 // resolvedUsage returns the authoritative usage for a stream in the current period.
-// Rule: only trust Stripe summaries when the sub item has a non-zero unit price
-// (stored in sub_item_price_cents — no extra Stripe API call needed).
-// Otherwise local DB is the source of truth (prevents stale $0-priced sub item counts).
+//
+// Rules:
+//   - If sub item has a real price (sub_item_price_cents > 0): Stripe is the
+//     billing source of truth. Use Stripe summaries. Fall back to local only
+//     if Stripe returns 0 (e.g. new sub item with no records yet).
+//   - If sub item has $0/unit price (legacy): local DB is the only source.
+//   - If no sub item: local DB only.
 func (h *UBBHandler) resolvedUsage(subItemID, streamID string, subItemPriceCents int64, periodStart, periodEnd int64) (usage int64, source string) {
-	local := h.localUsageForPeriod(streamID, periodStart, periodEnd)
-
 	if subItemID != "" && subItemPriceCents > 0 {
-		// Sub item has a real price — trust Stripe summaries
-		params := &stripe.UsageRecordSummaryListParams{
-			SubscriptionItem: stripe.String(subItemID),
+		// Properly-priced sub item — Stripe is billing source of truth
+		stripeUsage := stripeUsageForPeriod(subItemID, periodStart, periodEnd)
+		if stripeUsage > 0 {
+			return stripeUsage, "stripe"
 		}
-		iter := usagerecordsummary.List(params)
-		for iter.Next() {
-			s := iter.UsageRecordSummary()
-			if s.Period.Start >= periodStart && s.Period.Start < periodEnd {
-				usage += s.TotalUsage
-			}
-		}
-		if usage > 0 {
-			return usage, "stripe"
-		}
+		// Stripe returned 0 — fall back to local (new sub item, usage not yet aggregated)
+		local := h.localUsageForPeriod(streamID, periodStart, periodEnd)
+		return local, "local"
 	}
 
-	// Fall back to local (also the only source when sub item is $0/unit or missing)
+	// Legacy $0/unit sub item or no sub item — local DB only
+	local := h.localUsageForPeriod(streamID, periodStart, periodEnd)
 	return local, "local"
 }

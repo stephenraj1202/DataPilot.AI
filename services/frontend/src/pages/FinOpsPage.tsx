@@ -19,6 +19,50 @@ import ConfirmModal from '../components/common/ConfirmModal'
 import { formatCurrency } from '../utils/formatters'
 import toast from 'react-hot-toast'
 
+// ── Demo data — shown only when no real accounts exist AND demo mode is ON ────
+const DEMO_COST_DATA = {
+  total_cost: 8342.17,
+  forecast_cost: 11200.00,
+  currency: 'USD',
+  breakdown_by_provider: { aws: 4821.50, azure: 2310.40, gcp: 1210.27 },
+  breakdown_by_service: [
+    { service: 'Amazon EC2', provider: 'aws', cost: 2140.80 },
+    { service: 'Amazon RDS', provider: 'aws', cost: 980.20 },
+    { service: 'Amazon S3', provider: 'aws', cost: 620.50 },
+    { service: 'AWS Lambda', provider: 'aws', cost: 480.00 },
+    { service: 'Amazon CloudFront', provider: 'aws', cost: 600.00 },
+    { service: 'Azure Virtual Machines', provider: 'azure', cost: 1100.40 },
+    { service: 'Azure SQL Database', provider: 'azure', cost: 710.00 },
+    { service: 'Azure Blob Storage', provider: 'azure', cost: 500.00 },
+    { service: 'Google Compute Engine', provider: 'gcp', cost: 720.27 },
+    { service: 'Cloud SQL', provider: 'gcp', cost: 490.00 },
+  ],
+  service_count_by_provider: { aws: 5, azure: 3, gcp: 2 },
+  daily_costs: Array.from({ length: 21 }, (_, i) => ({
+    date: new Date(new Date().getFullYear(), new Date().getMonth(), i + 1).toISOString().split('T')[0],
+    cost: 280 + Math.sin(i * 0.7) * 80 + Math.random() * 60,
+  })),
+  monthly_trends: [
+    { month: '2025-10', cost: 7200 }, { month: '2025-11', cost: 7850 },
+    { month: '2025-12', cost: 8100 }, { month: '2026-01', cost: 7600 },
+    { month: '2026-02', cost: 8900 }, { month: '2026-03', cost: 8342 },
+  ],
+}
+const DEMO_ANOMALIES = [
+  { id: 'd1', date: new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0], baseline_cost: 280, actual_cost: 620, deviation_percentage: 121, severity: 'high' as const, contributing_services: ['Amazon EC2', 'Amazon RDS'], acknowledged: false },
+  { id: 'd2', date: new Date(Date.now() - 5 * 86400000).toISOString().split('T')[0], baseline_cost: 310, actual_cost: 480, deviation_percentage: 55, severity: 'medium' as const, contributing_services: ['Azure Virtual Machines'], acknowledged: false },
+]
+const DEMO_RECS = [
+  { id: 'r1', type: 'rightsizing', resource_id: 'i-0abc123', description: 'EC2 instance i-0abc123 is consistently under 10% CPU — downsize from m5.xlarge to m5.large', potential_monthly_savings: 142.50, cloud_provider: 'aws' },
+  { id: 'r2', type: 'reserved_instances', resource_id: 'rds-prod-01', description: 'Convert RDS on-demand to 1-year reserved instance for 35% savings', potential_monthly_savings: 343.07, cloud_provider: 'aws' },
+  { id: 'r3', type: 'idle_resources', resource_id: 'az-vm-dev-02', description: 'Azure VM az-vm-dev-02 has been idle for 14 days — consider stopping or deleting', potential_monthly_savings: 88.20, cloud_provider: 'azure' },
+]
+const DEMO_ACCOUNTS = [
+  { id: 'demo-aws', provider: 'aws', account_name: 'Production AWS', status: 'active', last_sync_at: new Date().toISOString() },
+  { id: 'demo-azure', provider: 'azure', account_name: 'Azure Corp', status: 'active', last_sync_at: new Date().toISOString() },
+  { id: 'demo-gcp', provider: 'gcp', account_name: 'GCP Analytics', status: 'active', last_sync_at: new Date().toISOString() },
+]
+
 function getDateRange() {
   const end = new Date()
   const start = new Date(end.getFullYear(), end.getMonth(), 1)
@@ -1019,6 +1063,7 @@ export default function FinOpsPage() {
   const [showPanel, setShowPanel] = useState(false)
   const [showReportModal, setShowReportModal] = useState(false)
   const [showManageDrawer, setShowManageDrawer] = useState(false)
+  const [demoMode, setDemoMode] = useState(false)
 
   const { data: costData, isLoading: costLoading, refetch: refetchCost } = useQuery({
     queryKey: ['cost-summary', startDate, endDate],
@@ -1059,20 +1104,26 @@ export default function FinOpsPage() {
   }, [queryClient, refetchCost, refetchAccounts])
 
   const allAccounts: CloudAccount[] = accountsData?.cloud_accounts ?? []
-  const services = costData?.breakdown_by_service ?? []
+  const hasRealAccounts = allAccounts.length > 0
+
+  // Demo mode is only active when explicitly toggled AND no real accounts exist
+  const isDemo = demoMode && !hasRealAccounts
+
+  const services = isDemo ? DEMO_COST_DATA.breakdown_by_service : (costData?.breakdown_by_service ?? [])
   const filteredServices = selectedAccount ? services.filter(s => s.provider === selectedAccount.provider) : services
-  const byProvider = costData?.breakdown_by_provider ?? {}
+  const byProvider = isDemo ? DEMO_COST_DATA.breakdown_by_provider : (costData?.breakdown_by_provider ?? {})
   const filteredByProvider = selectedAccount
     ? Object.fromEntries(Object.entries(byProvider).filter(([p]) => p === selectedAccount.provider))
     : byProvider
-  const totalCost = selectedAccount ? (filteredByProvider[selectedAccount.provider] ?? 0) : (costData?.total_cost ?? 0)
-  const forecast = costData?.forecast_cost ?? 0
-  const filteredForecast = selectedAccount && costData?.total_cost ? (totalCost / (costData.total_cost || 1)) * forecast : forecast
-  const serviceCountByProvider = costData?.service_count_by_provider ?? {}
-  const dailyCosts = costData?.daily_costs ?? []
-  const monthlyTrends = costData?.monthly_trends ?? []
-  const anomalies = anomaliesData?.anomalies ?? []
-  const recs = recsData?.recommendations ?? []
+  const totalCost = selectedAccount ? (filteredByProvider[selectedAccount.provider] ?? 0) : (isDemo ? DEMO_COST_DATA.total_cost : (costData?.total_cost ?? 0))
+  const forecast = isDemo ? DEMO_COST_DATA.forecast_cost : (costData?.forecast_cost ?? 0)
+  const filteredForecast = selectedAccount && (isDemo ? DEMO_COST_DATA.total_cost : costData?.total_cost) ? (totalCost / ((isDemo ? DEMO_COST_DATA.total_cost : costData?.total_cost) || 1)) * forecast : forecast
+  const serviceCountByProvider = isDemo ? DEMO_COST_DATA.service_count_by_provider : (costData?.service_count_by_provider ?? {})
+  const dailyCosts = isDemo ? DEMO_COST_DATA.daily_costs : (costData?.daily_costs ?? [])
+  const monthlyTrends = isDemo ? DEMO_COST_DATA.monthly_trends : (costData?.monthly_trends ?? [])
+  const anomalies = isDemo ? DEMO_ANOMALIES : (anomaliesData?.anomalies ?? [])
+  const recs = isDemo ? DEMO_RECS : (recsData?.recommendations ?? [])
+  const displayAccounts = isDemo ? DEMO_ACCOUNTS : allAccounts
 
   const areaData = (() => {
     const map: Record<string, Record<string, unknown>> = {}
@@ -1104,7 +1155,7 @@ export default function FinOpsPage() {
               className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all border ${!selectedAccount ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'border-gray-200 bg-white text-gray-500 hover:border-indigo-300 hover:text-indigo-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'}`}>
               All Accounts
             </button>
-            {allAccounts.map(acc => {
+            {displayAccounts.map(acc => {
               const cfg = PROVIDER_CONFIG[acc.provider]
               const active = selectedAccount?.id === acc.id
               return (
@@ -1119,6 +1170,21 @@ export default function FinOpsPage() {
             })}
           </div>
           <div className="flex flex-shrink-0 items-center gap-1.5">
+            {/* Demo mode toggle — only shown when no real accounts connected */}
+            {!hasRealAccounts && (
+              <button
+                onClick={() => { setDemoMode(d => !d); setSelectedAccount(null) }}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-all ${
+                  demoMode
+                    ? 'border-violet-400 bg-violet-600 text-white shadow-sm'
+                    : 'border-gray-200 bg-white text-gray-500 hover:border-violet-300 hover:text-violet-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                }`}
+                title={demoMode ? 'Switch to real data' : 'Preview with demo data'}
+              >
+                <span className="text-[10px]">{demoMode ? '◉' : '○'}</span>
+                Demo
+              </button>
+            )}
             <button onClick={() => setShowReportModal(true)}
               className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
               <Mail className="h-3.5 w-3.5" /><span className="hidden sm:inline">Reports</span>
@@ -1147,12 +1213,24 @@ export default function FinOpsPage() {
           <div className="flex h-64 items-center justify-center"><LoadingSpinner /></div>
         ) : (
           <>
+            {/* Demo mode banner */}
+            {isDemo && (
+              <div className="flex items-center gap-3 rounded-xl border border-violet-300 bg-violet-50 px-4 py-2.5 dark:border-violet-700 dark:bg-violet-900/20">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-violet-500 text-[10px] font-black text-white">D</span>
+                <p className="flex-1 text-xs font-semibold text-violet-800 dark:text-violet-200">
+                  Demo mode — showing sample data. Connect a real cloud account to see your actual costs.
+                </p>
+                <button onClick={() => setDemoMode(false)} className="text-[10px] font-bold text-violet-500 hover:text-violet-700 dark:hover:text-violet-300 underline">
+                  Dismiss
+                </button>
+              </div>
+            )}
             {/* Row 1: KPI tiles — 4 equal columns */}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <KpiTile label="Month-to-Date" value={totalCost} prefix="$" icon={DollarSign} from="#6366f1" to="#8b5cf6" glow="rgba(99,102,241,0.35)" sparkData={totalSparkData} />
               <KpiTile label="Forecast" value={filteredForecast} prefix="$" icon={TrendingUp} from="#f59e0b" to="#f97316" glow="rgba(245,158,11,0.35)" sparkData={totalSparkData} />
               <KpiTile label="Services" value={filteredServices.length} prefix="" icon={Layers} from="#10b981" to="#06b6d4" glow="rgba(16,185,129,0.35)" animate={false} />
-              <KpiTile label="Accounts" value={allAccounts.length} prefix="" icon={Cloud} from="#3b82f6" to="#6366f1" glow="rgba(59,130,246,0.35)" animate={false} />
+              <KpiTile label="Accounts" value={displayAccounts.length} prefix="" icon={Cloud} from="#3b82f6" to="#6366f1" glow="rgba(59,130,246,0.35)" animate={false} />
             </div>
 
             {/* Row 2: Provider tiles */}
@@ -1250,12 +1328,12 @@ export default function FinOpsPage() {
 
               {/* P16: Account Health */}
               <Portlet title="Account Health" sub="Sync status and connectivity health of all cloud accounts" icon={Server} iconBg="bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400">
-                <AccountHealthPortlet accounts={allAccounts} />
+                <AccountHealthPortlet accounts={displayAccounts} />
               </Portlet>
 
               {/* P17: Live Resource Tiles */}
               <Portlet title="Live Resource Counts" sub="Real-time resource inventory per cloud account from live APIs" icon={Server} iconBg="bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-400" className="lg:col-span-2">
-                <ResourceTilesPortlet accounts={allAccounts} />
+                <ResourceTilesPortlet accounts={isDemo ? [] : allAccounts} />
               </Portlet>
 
             </div>

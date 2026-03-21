@@ -54,17 +54,17 @@ func main() {
 	// Reverse proxy
 	rp := proxy.New(cbRegistry)
 
-	// Upstream service base URLs (configurable via config.ini or env in production)
-	authBase := "http://localhost:8081"
-	billingBase := "http://localhost:8082"
-	finopsBase := "http://localhost:8083"
-	aiBase := "http://localhost:8084"
+	// Upstream service base URLs — read from config.ini [services]
+	authBase := cfg.Services.AuthServiceURL
+	billingBase := cfg.Services.BillingServiceURL
+	finopsBase := cfg.Services.FinOpsServiceURL
+	aiBase := cfg.Services.AIQueryEngineURL
 
 	// Router
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowOrigins:     []string{cfg.Services.FrontendURL},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-API-Key"},
 		ExposeHeaders:    []string{"Content-Length"},

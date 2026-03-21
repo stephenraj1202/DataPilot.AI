@@ -59,6 +59,15 @@ type AuthConfig struct {
 	JWTSecret string
 }
 
+type ServicesConfig struct {
+	FrontendURL       string
+	APIGatewayURL     string
+	AuthServiceURL    string
+	BillingServiceURL string
+	FinOpsServiceURL  string
+	AIQueryEngineURL  string
+}
+
 type Config struct {
 	Database    DatabaseConfig
 	Redis       RedisConfig
@@ -68,6 +77,7 @@ type Config struct {
 	AI          AIConfig
 	Encryption  EncryptionConfig
 	Auth        AuthConfig
+	Services    ServicesConfig
 }
 
 func Load(configPath string) (*Config, error) {
@@ -158,6 +168,17 @@ func Load(configPath string) (*Config, error) {
 	}
 	config.Auth = AuthConfig{
 		JWTSecret: authSection.Key("jwt_secret").String(),
+	}
+
+	// Load Services config
+	svcSection := cfg.Section("services")
+	config.Services = ServicesConfig{
+		FrontendURL:       svcSection.Key("frontend_url").MustString("http://localhost:3000"),
+		APIGatewayURL:     svcSection.Key("api_gateway_url").MustString("http://localhost:8080"),
+		AuthServiceURL:    svcSection.Key("auth_service_url").MustString("http://localhost:8081"),
+		BillingServiceURL: svcSection.Key("billing_service_url").MustString("http://localhost:8082"),
+		FinOpsServiceURL:  svcSection.Key("finops_service_url").MustString("http://localhost:8083"),
+		AIQueryEngineURL:  svcSection.Key("ai_query_engine_url").MustString("http://localhost:8084"),
 	}
 
 	return config, nil

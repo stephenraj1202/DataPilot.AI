@@ -27,7 +27,7 @@ function triggerLogout() {
 }
 
 const api: AxiosInstance = axios.create({
-  baseURL: 'http://localhost:8080',
+  baseURL: import.meta.env.VITE_API_GATEWAY_URL ?? 'http://localhost:8080',
   withCredentials: true, // send httpOnly refresh_token cookie
 })
 
@@ -70,7 +70,7 @@ api.interceptors.response.use(
       isRefreshing = true
       try {
         const { data } = await axios.post(
-          'http://localhost:8081/auth/refresh',
+          `${import.meta.env.VITE_AUTH_SERVICE_URL ?? 'http://localhost:8081'}/auth/refresh`,
           {},
           { withCredentials: true },
         )
