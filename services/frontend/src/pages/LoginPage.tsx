@@ -24,7 +24,7 @@ const PERKS = [
   { icon: Cloud,     label: 'Multi-cloud unified view',       sub: 'AWS · Azure · GCP in one dashboard' },
   { icon: BarChart2, label: 'AI-powered cost analytics',      sub: 'Detect anomalies, cut waste by 40%' },
   { icon: Zap,       label: 'Natural language queries',       sub: 'Ask questions, get instant SQL insights' },
-  { icon: Activity,  label: 'Usage-based billing engine',     sub: 'Meter streams · Stripe overages · dry-run previews' },
+  { icon: Activity,  label: 'Usage-based billing engine',     sub: 'Meter streams · payment overages · dry-run previews' },
   { icon: Shield,    label: 'Enterprise-grade security',      sub: 'RBAC · JWT · AES-256 encryption' },
 ]
 
@@ -134,10 +134,10 @@ export default function LoginPage() {
               <div>
                 <p className="text-xs font-bold text-violet-300 mb-1">Usage-Based Billing — built in</p>
                 <p className="text-[11px] leading-relaxed text-gray-500">
-                  Create metered streams, post usage events via API, and let Stripe handle overage billing automatically. Includes dry-run invoice previews before any charge.
+                  Create metered streams, post usage events via API, and let your payment gateway handle overage billing automatically. Includes dry-run invoice previews before any charge.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {['Metered streams', 'Stripe overages', 'Dry-run preview', 'Pay-as-you-go'].map(tag => (
+                  {['Metered streams', 'Payment overages', 'Dry-run preview', 'Pay-as-you-go'].map(tag => (
                     <span key={tag} className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-400">
                       {tag}
                     </span>

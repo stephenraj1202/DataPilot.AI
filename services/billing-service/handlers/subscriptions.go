@@ -13,7 +13,9 @@ import (
 
 // SubscriptionHandler handles subscription creation and modification.
 type SubscriptionHandler struct {
-	DB *sql.DB
+	DB             *sql.DB
+	RazorpayKeyID  string
+	RazorpaySecret string
 }
 
 type createSubscriptionRequest struct {
@@ -249,6 +251,10 @@ func (h *SubscriptionHandler) UpdateSubscription(c *gin.Context) {
 }
 
 // isLocalSubID returns true if the subscription ID is a locally-generated one (not from Stripe).
+// Covers: free_, local_, trial_ (free trial), rzp_ (Razorpay), and any UUID-style local IDs.
 func isLocalSubID(id string) bool {
-	return strings.HasPrefix(id, "free_") || strings.HasPrefix(id, "local_")
+	return strings.HasPrefix(id, "free_") ||
+		strings.HasPrefix(id, "local_") ||
+		strings.HasPrefix(id, "trial_") ||
+		strings.HasPrefix(id, "rzp_")
 }

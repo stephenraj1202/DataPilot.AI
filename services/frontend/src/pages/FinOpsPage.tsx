@@ -486,19 +486,7 @@ function ManageAccountsDrawer({ accounts, syncingId, onEdit, onSync, onDelete, o
   onEdit: (a: Account) => void; onSync: (id: string) => void
   onDelete: (id: string) => void; onAdd: () => void; onClose: () => void
 }) {
-  const [confirmAcc, setConfirmAcc] = useState<Account | null>(null)
-
   return (
-    <>
-    {confirmAcc && (
-      <ConfirmModal
-        title={`Remove "${confirmAcc.account_name}"?`}
-        message="This will disconnect the cloud account and remove all associated cost data. This action cannot be undone."
-        confirmLabel="Remove Account"
-        onConfirm={() => { onDelete(confirmAcc.id); setConfirmAcc(null) }}
-        onCancel={() => setConfirmAcc(null)}
-      />
-    )}
     <div className="fixed inset-0 z-50 flex">
       {/* Backdrop */}
       <div className="flex-1 bg-black/40 backdrop-blur-sm" onClick={onClose} />
@@ -573,7 +561,7 @@ function ManageAccountsDrawer({ accounts, syncingId, onEdit, onSync, onDelete, o
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 py-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </button>
-                  <button onClick={() => setConfirmAcc(acc)}
+                  <button onClick={() => onDelete(acc.id)}
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-red-50 dark:bg-red-900/30 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors">
                     <Trash2 className="h-3.5 w-3.5" /> Delete
                   </button>
@@ -584,7 +572,6 @@ function ManageAccountsDrawer({ accounts, syncingId, onEdit, onSync, onDelete, o
         </div>
       </div>
     </div>
-    </>
   )
 }
 
@@ -1080,7 +1067,10 @@ export default function FinOpsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => finopsService.deleteCloudAccount(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['cloud-accounts'] }); if (selectedAccount) setSelectedAccount(null); toast.success('Account removed') },
-    onError: () => toast.error('Failed to remove account'),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to remove account'
+      toast.error(msg)
+    },
   })
   const syncMutation = useMutation({
     mutationFn: async (id: string) => { setSyncingId(id); await finopsService.syncCloudAccount(id) },

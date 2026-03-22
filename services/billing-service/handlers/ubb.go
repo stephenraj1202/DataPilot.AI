@@ -22,7 +22,13 @@ import (
 
 // UBBHandler handles Usage-Based Billing streams and meter events.
 type UBBHandler struct {
-	DB *sql.DB
+	DB          *sql.DB
+	PaymentMode string // "stripe" or "razorpay"
+}
+
+// isRazorpay returns true when the payment mode is razorpay.
+func (h *UBBHandler) isRazorpay() bool {
+	return h.PaymentMode == "razorpay"
 }
 
 // ── DB bootstrap ──────────────────────────────────────────────────────────────
@@ -498,7 +504,7 @@ func (h *UBBHandler) GetUsageSummary(c *gin.Context) {
 		"total_usage":         total,
 		"included_units":      includedUnits,
 		"overage_units":       overage,
-		"overage_cost_usd":    fmt.Sprintf("%.2f", overageCost),
+		"overage_cost_inr":    fmt.Sprintf("%.2f", overageCost),
 		"overage_price_cents": overagePriceCents,
 		"period_start":        periodStart,
 		"period_end":          periodEnd,
@@ -508,13 +514,17 @@ func (h *UBBHandler) GetUsageSummary(c *gin.Context) {
 }
 
 // PreviewInvoice GET /billing/ubb/invoice/preview
-// Returns the upcoming Stripe invoice. For metered lines priced at $0 (legacy sub items
-// created before per-unit pricing was configured), the amount is patched with the
-// locally-calculated overage so the UI always shows the correct charge.
+// Returns the upcoming Stripe invoice. For Razorpay mode, returns nil (use DryRunInvoice instead).
 func (h *UBBHandler) PreviewInvoice(c *gin.Context) {
 	accountID := c.GetHeader("X-Account-ID")
 	if accountID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "account_id required"})
+		return
+	}
+
+	// Razorpay mode: no Stripe invoice preview available — frontend uses DryRunInvoice
+	if h.isRazorpay() {
+		c.JSON(http.StatusOK, gin.H{"preview": nil, "message": "no active Stripe subscription"})
 		return
 	}
 
@@ -674,6 +684,11 @@ func (h *UBBHandler) GetSubscriptionItems(c *gin.Context) {
 	accountID := c.GetHeader("X-Account-ID")
 	if accountID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "account_id required"})
+		return
+	}
+
+	if h.isRazorpay() {
+		c.JSON(http.StatusOK, gin.H{"items": []any{}})
 		return
 	}
 
@@ -933,7 +948,7 @@ func (h *UBBHandler) DryRunInvoice(c *gin.Context) {
 		"flat_fee_usd": float64(flatFeeCents) / 100.0,
 		"overage_usd":  float64(totalOverageCents) / 100.0,
 		"total_usd":    float64(totalCents) / 100.0,
-		"currency":     "usd",
+		"currency":     "inr",
 		"lines":        lines,
 		"stream_count": len(streams),
 	})
@@ -1027,13 +1042,13 @@ func (h *UBBHandler) GetNextBillSummary(c *gin.Context) {
 		"active_overage_usd":    float64(activeOverageCents) / 100.0,
 		"deleted_revenue_usd":   float64(deletedRevenueCents) / 100.0,
 		"total_usd":             float64(totalCents) / 100.0,
+		"currency":              "inr",
 	})
 }
 
 // PayUBBInvoice POST /billing/ubb/invoice/pay
-// Only charges streams that have NO Stripe sub item (local-only fallback).
-// Streams with a valid sub item are already billed automatically by Stripe's
-// subscription at period end — creating a second invoice for them would double-charge.
+// For Stripe mode: creates a Stripe invoice for local-only streams.
+// For Razorpay mode: creates a Razorpay payment link for the overage amount.
 func (h *UBBHandler) PayUBBInvoice(c *gin.Context) {
 	accountID := c.GetHeader("X-Account-ID")
 	if accountID == "" {
@@ -1041,21 +1056,10 @@ func (h *UBBHandler) PayUBBInvoice(c *gin.Context) {
 		return
 	}
 
-	var stripeCustomerID string
-	_ = h.DB.QueryRow(
-		`SELECT stripe_customer_id FROM stripe_customers WHERE account_id=?`, accountID,
-	).Scan(&stripeCustomerID)
-	if stripeCustomerID == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"paid":      false,
-			"total_usd": 0.0,
-			"message":   "No Stripe customer found — subscribe to a plan first",
-		})
-		return
-	}
+	// Calculate total overage across all local streams
+	periodStart, periodEnd := h.currentBillingPeriod(accountID)
+	now := time.Now()
 
-	// Only fetch streams WITHOUT a Stripe sub item (local-only billing).
-	// Streams with a sub item are handled by Stripe's subscription automatically.
 	rows, err := h.DB.Query(
 		`SELECT id, stream_name, included_units, overage_price_cents
 		 FROM ubb_streams
@@ -1086,22 +1090,19 @@ func (h *UBBHandler) PayUBBInvoice(c *gin.Context) {
 	if len(streams) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"paid":      false,
-			"message":   "All streams are billed via Stripe subscription — no manual payment needed",
+			"message":   "All streams are billed via payment gateway subscription — no manual payment needed",
 			"total_usd": 0.0,
 		})
 		return
 	}
 
-	periodStart, periodEnd := h.currentBillingPeriod(accountID)
-	now := time.Now()
-
-	var totalOverageCents int64
 	type overageLine struct {
 		streamName   string
 		overageUnits int64
 		cents        int64
 	}
 	var overageLines []overageLine
+	var totalOverageCents int64
 
 	for _, s := range streams {
 		var usage int64
@@ -1124,6 +1125,30 @@ func (h *UBBHandler) PayUBBInvoice(c *gin.Context) {
 			"paid":      false,
 			"message":   "No overage charges — nothing to pay",
 			"total_usd": 0.0,
+		})
+		return
+	}
+
+	// ── Razorpay mode: create a payment link ──────────────────────────────────
+	if h.isRazorpay() {
+		c.JSON(http.StatusOK, gin.H{
+			"paid":      false,
+			"total_usd": float64(totalOverageCents) / 100.0,
+			"message":   fmt.Sprintf("Usage overage of ₹%.2f — contact support or pay via your Razorpay dashboard", float64(totalOverageCents)/100.0),
+		})
+		return
+	}
+
+	// ── Stripe mode ───────────────────────────────────────────────────────────
+	var stripeCustomerID string
+	_ = h.DB.QueryRow(
+		`SELECT stripe_customer_id FROM stripe_customers WHERE account_id=?`, accountID,
+	).Scan(&stripeCustomerID)
+	if stripeCustomerID == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"paid":      false,
+			"total_usd": 0.0,
+			"message":   "No Stripe customer found — subscribe to a plan first",
 		})
 		return
 	}
@@ -1298,8 +1323,7 @@ func (h *UBBHandler) SnapshotRevenue(c *gin.Context) {
 
 // resolveStripeContextForStream finds the Stripe customer and picks an UNUSED
 // metered sub item for the new stream. Each stream must have its own sub item.
-// If all metered sub items are already assigned, subItemID is returned empty
-// (stream will fall back to local billing).
+// For Razorpay mode, returns empty strings (local billing only).
 func (h *UBBHandler) resolveStripeContextForStream(accountID string, overagePriceCents int64) (customerID, subItemID, planName string, subItemPriceCents int64) {
 	_ = h.DB.QueryRow(
 		`SELECT stripe_customer_id FROM stripe_customers WHERE account_id=?`, accountID,
@@ -1315,7 +1339,8 @@ func (h *UBBHandler) resolveStripeContextForStream(accountID string, overagePric
 		accountID,
 	).Scan(&stripeSubID, &planName)
 
-	if stripeSubID == "" || isLocalSubID(stripeSubID) {
+	// For Razorpay or local subscriptions, skip all Stripe sub item logic
+	if h.isRazorpay() || stripeSubID == "" || isLocalSubID(stripeSubID) {
 		return
 	}
 

@@ -18,8 +18,10 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Configure Stripe
+	// Configure Stripe (always init, even if Razorpay is active — some local logic uses it)
 	stripe.Key = cfg.Stripe.APIKey
+
+	log.Printf("Payment mode: %s", cfg.Payment.Mode)
 
 	// Initialize database connection
 	db, err := database.NewConnection(database.DBConfig{
@@ -55,7 +57,11 @@ func main() {
 
 	// Initialize handlers
 	customerHandler := &handlers.CustomerHandler{DB: db.DB}
-	subscriptionHandler := &handlers.SubscriptionHandler{DB: db.DB}
+	subscriptionHandler := &handlers.SubscriptionHandler{
+		DB:             db.DB,
+		RazorpayKeyID:  cfg.Razorpay.KeyID,
+		RazorpaySecret: cfg.Razorpay.KeySecret,
+	}
 	webhookHandler := &handlers.WebhookHandler{
 		DB:            db.DB,
 		WebhookSecret: cfg.Stripe.WebhookSecret,
@@ -72,15 +78,17 @@ func main() {
 		CancelURL:  cfg.Stripe.CancelURL,
 		Cfg:        cfg,
 	}
-	ubbHandler := &handlers.UBBHandler{DB: db.DB}
+	ubbHandler := &handlers.UBBHandler{DB: db.DB, PaymentMode: cfg.Payment.Mode}
 
 	// Ensure UBB tables exist
 	if err := handlers.EnsureUBBTable(db.DB); err != nil {
 		log.Printf("Warning: failed to create UBB tables: %v", err)
 	}
 
-	// Backfill sub_item_price_cents for existing streams (runs once, fast)
-	go handlers.SyncSubItemPrices(db.DB)
+	// Backfill sub_item_price_cents for existing streams (runs once, fast) — Stripe only
+	if cfg.Payment.Mode != "razorpay" {
+		go handlers.SyncSubItemPrices(db.DB)
+	}
 
 	// Daily goroutine: snapshot active stream usage into ubb_billed_revenue
 	go func() {
@@ -108,6 +116,9 @@ func main() {
 	billing := router.Group("/billing")
 	{
 		billing.GET("/plans", handlers.GetPlans(db.DB))
+		billing.GET("/payment-mode", func(c *gin.Context) {
+			c.JSON(200, gin.H{"mode": cfg.Payment.Mode})
+		})
 		billing.GET("/subscription", subscriptionHandler.GetSubscription)
 		billing.POST("/customers", customerHandler.CreateCustomer)
 		billing.POST("/subscribe", subscriptionHandler.Subscribe)
@@ -118,6 +129,23 @@ func main() {
 		billing.GET("/plan-limits", planLimitsHandler.GetPlanLimits)
 		billing.POST("/checkout", checkoutHandler.CreateCheckoutSession)
 		billing.POST("/checkout/confirm", checkoutHandler.ConfirmCheckoutSession)
+
+		// Razorpay (used when payment.mode=razorpay)
+		razorpayHandler := &handlers.RazorpayCheckoutHandler{
+			DB:               db.DB,
+			KeyID:            cfg.Razorpay.KeyID,
+			KeySecret:        cfg.Razorpay.KeySecret,
+			WebhookSecret:    cfg.Razorpay.WebhookSecret,
+			SuccessURL:       cfg.Razorpay.SuccessURL,
+			CancelURL:        cfg.Razorpay.CancelURL,
+			BasePlanID:       cfg.RazorpayPlans.BasePlanID,
+			ProPlanID:        cfg.RazorpayPlans.ProPlanID,
+			EnterprisePlanID: cfg.RazorpayPlans.EnterprisePlanID,
+		}
+		billing.POST("/razorpay/order", razorpayHandler.CreateRazorpayOrder)
+		billing.POST("/razorpay/verify", razorpayHandler.VerifyRazorpayPayment)
+		billing.POST("/razorpay/webhook", razorpayHandler.HandleRazorpayWebhook)
+		billing.GET("/razorpay/payments", razorpayHandler.GetRazorpayPayments)
 
 		// Usage-Based Billing (UBB)
 		billing.POST("/ubb/streams", ubbHandler.CreateStream)

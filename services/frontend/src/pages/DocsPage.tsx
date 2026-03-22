@@ -281,7 +281,7 @@ function OverviewSection() {
         <FeatureCard icon={LayoutDashboard} color="text-blue-500"   title="Dashboard"        desc="Real-time KPIs, cost trends, and usage metrics at a glance." />
         <FeatureCard icon={Cloud}           color="text-emerald-500" title="FinOps Analytics" desc="Multi-cloud cost visibility with AI-powered recommendations." />
         <FeatureCard icon={MessageSquare}   color="text-violet-500" title="AI Query Tool"    desc="Ask questions in plain English, get SQL + charts instantly." />
-        <FeatureCard icon={CreditCard}      color="text-amber-500"  title="Billing"          desc="Subscription plans, invoices, and Stripe checkout." />
+        <FeatureCard icon={CreditCard}      color="text-amber-500"  title="Billing"          desc="Subscription plans, invoices, and secure checkout." />
         <FeatureCard icon={Zap}             color="text-pink-500"   title="Usage Billing"    desc="Per-unit metered billing streams with live invoice preview." />
         <FeatureCard icon={Key}             color="text-cyan-500"   title="API Keys"         desc="Secure API key management for external integrations." />
       </div>
@@ -368,11 +368,11 @@ curl -H "X-API-Key: YOUR_KEY" ${BASE}/api/query/bookmarks`} />
 function BillingSection() {
   return (
     <div className="space-y-6">
-      <SectionTitle icon={CreditCard} gradient="from-amber-500 to-orange-500" title="Billing" subtitle="Subscription plans, Stripe checkout, invoices, and plan limits." />
+      <SectionTitle icon={CreditCard} gradient="from-amber-500 to-orange-500" title="Billing" subtitle="Subscription plans, secure checkout, invoices, and plan limits." />
       <BillingIllustration />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <FeatureCard icon={CreditCard}  color="text-amber-500"   title="Plans"             desc="Free, Base, Pro, Enterprise — upgrade or downgrade anytime." />
-        <FeatureCard icon={DollarSign}  color="text-emerald-500" title="Stripe Checkout"   desc="Secure hosted checkout. Card details never touch our servers." />
+        <FeatureCard icon={DollarSign}  color="text-emerald-500" title="Secure Checkout"   desc="Secure hosted checkout. Card details never touch our servers." />
         <FeatureCard icon={FileText}    color="text-blue-500"    title="Invoices"          desc="Download PDF invoices for every billing period." />
         <FeatureCard icon={Shield}      color="text-violet-500"  title="Plan Limits"       desc="API rate limits and feature gates enforced per plan." />
       </div>
@@ -385,7 +385,7 @@ curl -H "X-API-Key: YOUR_KEY" ${BASE}/api/billing/invoices
 # Get plan limits
 curl -H "X-API-Key: YOUR_KEY" ${BASE}/api/billing/plan-limits
 
-# Create Stripe checkout session
+# Create checkout session
 curl -X POST -H "X-API-Key: YOUR_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"plan_id":"pro"}' \\
@@ -422,7 +422,7 @@ curl -H "X-API-Key: YOUR_KEY" ${BASE}/api/billing/ubb/invoice/preview
 
 # Dry run (includes deleted streams)
 curl -H "X-API-Key: YOUR_KEY" ${BASE}/api/billing/ubb/invoice/dryrun`} />
-      <InfoBox color="amber">Each unit posted is billed at the stream's <code>overage_price_cents</code> (Stripe streams use <code>sub_item_price_cents</code>). There is no free-tier deduction.</InfoBox>
+      <InfoBox color="amber">Each unit posted is billed at the stream's <code>overage_price_cents</code> (gateway streams use <code>sub_item_price_cents</code>). There is no free-tier deduction.</InfoBox>
     </div>
   )
 }

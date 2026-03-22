@@ -18,7 +18,8 @@ type SyncScheduler struct {
 // Start launches the background goroutine that syncs costs every 6 hours.
 func (s *SyncScheduler) Start() {
 	go func() {
-		// Run immediately on startup, then every 6 hours.
+		// Wait 2 minutes before first sync to allow service to stabilize
+		time.Sleep(2 * time.Minute)
 		s.runSync()
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
@@ -74,6 +75,14 @@ func (s *SyncScheduler) runSync() {
 func (s *SyncScheduler) scheduleRetry(id, provider, encCreds string) {
 	go func() {
 		time.Sleep(30 * time.Minute)
+		// Skip retry if account was deleted in the meantime
+		var count int
+		if err := s.DB.QueryRow(
+			`SELECT COUNT(*) FROM cloud_accounts WHERE id = ? AND deleted_at IS NULL AND status = 'active'`, id,
+		).Scan(&count); err != nil || count == 0 {
+			log.Printf("[sync] Skipping retry for account %s (deleted or inactive)", id)
+			return
+		}
 		log.Printf("[sync] Retrying sync for account %s", id)
 		if err := s.syncAccount(id, provider, encCreds); err != nil {
 			log.Printf("[sync] Retry failed for account %s: %v", id, err)

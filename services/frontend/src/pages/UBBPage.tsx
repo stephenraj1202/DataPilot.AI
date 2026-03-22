@@ -9,6 +9,15 @@ import { ubbService, type UBBStream, type DryRunInvoice } from '../services/ubb.
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import ConfirmModal from '../components/common/ConfirmModal'
 import toast from 'react-hot-toast'
+import { usePaymentMode } from '../hooks/usePaymentMode'
+import { formatPaise } from '../utils/formatters'
+
+// paise → ₹ with 4 decimal places for micro-amounts
+function formatPaiseExact(paise: number): string {
+  const inr = paise / 100
+  if (inr < 1) return `₹${inr.toFixed(4)}`
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(inr)
+}
 
 // ── Create Stream Modal ───────────────────────────────────────────────────────
 function CreateStreamModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
@@ -55,13 +64,13 @@ function CreateStreamModal({ onClose, onCreated }: { onClose: () => void; onCrea
             <p className="mt-1 text-[10px] text-gray-400">Unique identifier for the metered resource or endpoint</p>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold text-gray-700 dark:text-gray-300">Price per unit (¢)</label>
+            <label className="mb-1 block text-xs font-semibold text-gray-700 dark:text-gray-300">Price per unit (paise)</label>
             <input type="number" min={1} value={unitPriceCents} onChange={e => setUnitPriceCents(Number(e.target.value))}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
-            <p className="mt-1 text-[10px] text-gray-400">${(unitPriceCents / 100).toFixed(4)} charged per unit posted · billed via Stripe</p>
+            <p className="mt-1 text-[10px] text-gray-400">₹{(unitPriceCents / 100).toFixed(4)} charged per unit posted · billed via payment gateway</p>
           </div>
           <div className="rounded-lg bg-violet-50 dark:bg-violet-900/20 p-3 text-xs text-violet-700 dark:text-violet-300">
-            Every unit posted is billed at ${(unitPriceCents / 100).toFixed(4)} · Stripe invoices automatically at period end
+            Every unit posted is billed at ₹{(unitPriceCents / 100).toFixed(4)} · invoices automatically at period end
           </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-gray-100 dark:border-gray-700 px-6 py-4">
@@ -127,7 +136,6 @@ function StreamCard({ stream, onDelete, onRefresh }: { stream: UBBStream; onDele
   const totalUnits = summary?.total_usage ?? 0
   const unitPriceCents = stream.overage_price_cents
   const billedCents = totalUnits * unitPriceCents
-  const billedUSD = billedCents / 100
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
@@ -145,7 +153,7 @@ function StreamCard({ stream, onDelete, onRefresh }: { stream: UBBStream; onDele
         </span>
         {!stream.stripe_sub_item_id && (
           <button onClick={() => refreshSubMut.mutate()} disabled={refreshSubMut.isPending}
-            title="Re-link Stripe metered sub item"
+            title="Re-link payment sub item"
             className="rounded-lg p-1.5 text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors">
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
@@ -171,7 +179,7 @@ function StreamCard({ stream, onDelete, onRefresh }: { stream: UBBStream; onDele
           <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2">
             <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-amber-500 text-[9px] font-black text-white">!</span>
             <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              No Stripe sub item — usage recorded locally. Click <RefreshCw className="inline h-3 w-3" /> to re-link.
+              No payment sub item — usage recorded locally. Click <RefreshCw className="inline h-3 w-3" /> to re-link.
             </p>
           </div>
         )}
@@ -179,12 +187,12 @@ function StreamCard({ stream, onDelete, onRefresh }: { stream: UBBStream; onDele
         {/* Pricing info — simple: price per unit + billed so far */}
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-lg bg-violet-50 dark:bg-violet-900/20 px-3 py-2.5 text-center">
-            <p className="text-sm font-black text-violet-700 dark:text-violet-300">${(unitPriceCents / 100).toFixed(4)}</p>
+            <p className="text-sm font-black text-violet-700 dark:text-violet-300">₹{(unitPriceCents / 100).toFixed(4)}</p>
             <p className="text-[10px] text-gray-400 mt-0.5">Per unit</p>
           </div>
           <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2.5 text-center">
             <p className="text-sm font-black text-emerald-700 dark:text-emerald-300">
-              {summaryLoading ? '…' : `$${billedUSD.toFixed(4)}`}
+              {summaryLoading ? '…' : formatPaiseExact(billedCents)}
             </p>
             <p className="text-[10px] text-gray-400 mt-0.5">Billed this period</p>
           </div>
@@ -219,7 +227,7 @@ function StreamCard({ stream, onDelete, onRefresh }: { stream: UBBStream; onDele
           </div>
           {qty > 0 && (
             <p className="text-[10px] text-gray-400">
-              This will add <span className="font-semibold text-violet-600 dark:text-violet-400">${(qty * unitPriceCents / 100).toFixed(4)}</span> to next invoice
+              This will add <span className="font-semibold text-violet-600 dark:text-violet-400">₹{(qty * unitPriceCents / 100).toFixed(4)}</span> to next invoice
             </p>
           )}
         </div>
@@ -242,9 +250,9 @@ function StreamCard({ stream, onDelete, onRefresh }: { stream: UBBStream; onDele
               style={{ width: `${Math.min((totalUnits / Math.max(totalUnits * 1.5, 1000)) * 100, 100)}%` }} />
           </div>
           <div className="flex items-center justify-between text-[10px] text-gray-400">
-            <span>Next invoice: <span className="font-semibold text-emerald-600 dark:text-emerald-400">${billedUSD.toFixed(4)}</span></span>
+            <span>Next invoice: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{formatPaiseExact(billedCents)}</span></span>
             {summary && (
-              <span>Stripe: {summary.stripe_total.toLocaleString()} · Local: {summary.local_total.toLocaleString()}</span>
+              <span>{summary.stripe_total.toLocaleString()} gateway · Local: {summary.local_total.toLocaleString()}</span>
             )}
           </div>
         </div>
@@ -275,7 +283,7 @@ function InvoicePreviewPanel() {
     mutationFn: () => ubbService.payInvoice(),
     onSuccess: (res) => {
       if (res.paid) {
-        toast.success(`Payment successful — $${res.total_usd.toFixed(2)} charged`)
+        toast.success(`Payment successful — ₹${res.total_usd.toFixed(2)} charged`)
       } else if (res.invoice_url) {
         toast.error('Auto-charge failed — opening invoice')
         window.open(res.invoice_url, '_blank')
@@ -319,7 +327,7 @@ function InvoicePreviewPanel() {
             <div className="flex justify-center py-4"><LoadingSpinner /></div>
           ) : !preview ? (
             <div className="text-center py-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400">{previewData?.message ?? 'No active Stripe subscription'}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{previewData?.message ?? 'No active subscription'}</p>
               <p className="mt-1 text-[11px] text-gray-400">Run a preview below to see estimated charges.</p>
             </div>
           ) : (
@@ -331,7 +339,7 @@ function InvoicePreviewPanel() {
                   {preview.period_end ? new Date(preview.period_end * 1000).toLocaleDateString() : '—'}
                 </span>
                 <span className="text-base font-black text-gray-900 dark:text-white">
-                  ${totalPreview.toFixed(2)} <span className="text-[10px] font-normal text-gray-400 uppercase">{preview.currency}</span>
+                  ₹{totalPreview.toFixed(2)} <span className="text-[10px] font-normal text-gray-400 uppercase">{preview.currency?.toUpperCase() ?? 'INR'}</span>
                 </span>
               </div>
               <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
@@ -343,7 +351,7 @@ function InvoicePreviewPanel() {
                         <span className="text-[10px] text-gray-400">{l.quantity.toLocaleString()} units × rate</span>
                       )}
                     </div>
-                    <span className="text-[11px] font-semibold text-gray-800 dark:text-white flex-shrink-0">${l.amount_usd.toFixed(2)}</span>
+                    <span className="text-[11px] font-semibold text-gray-800 dark:text-white flex-shrink-0">₹{l.amount_usd.toFixed(2)}</span>
                   </div>
                 ))}
               </div>
@@ -367,7 +375,7 @@ function InvoicePreviewPanel() {
               <FlaskConical className="h-4 w-4 text-violet-600 dark:text-violet-400" />
               <p className="text-sm font-bold text-violet-800 dark:text-violet-200">Preview — {dryRun.period}</p>
             </div>
-            <span className="text-base font-black text-violet-700 dark:text-violet-300">${dryRun.total_usd.toFixed(2)}</span>
+            <span className="text-base font-black text-violet-700 dark:text-violet-300">₹{dryRun.total_usd.toFixed(2)}</span>
           </div>
           <div className="p-4 space-y-3">
             <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
@@ -375,11 +383,11 @@ function InvoicePreviewPanel() {
                 <div key={i} className="py-2 space-y-0.5">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-[11px] text-gray-700 dark:text-gray-300 flex-1">{l.description}</span>
-                    <span className="text-[11px] font-bold flex-shrink-0 text-gray-800 dark:text-white">${l.amount_usd.toFixed(4)}</span>
+                    <span className="text-[11px] font-bold flex-shrink-0 text-gray-800 dark:text-white">₹{l.amount_usd.toFixed(4)}</span>
                   </div>
                   {l.units > 0 && (
                     <p className="text-[10px] text-gray-400">
-                      {l.units.toLocaleString()} units × ${(l.amount_usd / Math.max(l.units, 1)).toFixed(6)}/unit
+                      {l.units.toLocaleString()} units × ₹{(l.amount_usd / Math.max(l.units, 1)).toFixed(6)}/unit
                     </p>
                   )}
                 </div>
@@ -387,13 +395,13 @@ function InvoicePreviewPanel() {
             </div>
             <div className="rounded-lg bg-gray-50 dark:bg-gray-700/40 p-3 space-y-1.5 text-xs">
               <div className="flex justify-between text-gray-500 dark:text-gray-400">
-                <span>Plan flat fee</span><span>${dryRun.flat_fee_usd.toFixed(2)}</span>
+                <span>Plan flat fee</span><span>₹{dryRun.flat_fee_usd.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-violet-600 dark:text-violet-400 font-semibold">
-                <span>Usage charges</span><span>${dryRun.overage_usd.toFixed(4)}</span>
+                <span>Usage charges</span><span>₹{dryRun.overage_usd.toFixed(4)}</span>
               </div>
               <div className="flex justify-between font-black text-gray-900 dark:text-white border-t border-gray-200 dark:border-gray-600 pt-1.5 text-sm">
-                <span>Total</span><span>${dryRun.total_usd.toFixed(2)}</span>
+                <span>Total</span><span>₹{dryRun.total_usd.toFixed(2)}</span>
               </div>
             </div>
 
@@ -401,7 +409,7 @@ function InvoicePreviewPanel() {
             {payMut.data?.paid ? (
               <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 p-3 flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">Paid — ${payMut.data.total_usd.toFixed(2)} charged</p>
+                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">Paid — ₹{payMut.data.total_usd.toFixed(2)} charged</p>
                 {payMut.data.invoice_url && (
                   <a href={payMut.data.invoice_url} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-emerald-600 hover:underline flex items-center gap-1">
                     <ExternalLink className="h-3 w-3" /> View
@@ -412,7 +420,7 @@ function InvoicePreviewPanel() {
               <button onClick={() => payMut.mutate()} disabled={payMut.isPending || dryRun.total_usd <= dryRun.flat_fee_usd}
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-40 transition-all">
                 {payMut.isPending ? <LoadingSpinner size="sm" /> : <CreditCard className="h-4 w-4" />}
-                {payMut.isPending ? 'Processing…' : `Pay $${dryRun.total_usd.toFixed(2)}`}
+                {payMut.isPending ? 'Processing…' : `Pay ₹${dryRun.total_usd.toFixed(2)}`}
               </button>
             )}
           </div>
@@ -424,6 +432,7 @@ function InvoicePreviewPanel() {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function UBBPage() {
+  const { label: payLabel, mode: payMode } = usePaymentMode()
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
 
@@ -440,7 +449,7 @@ export default function UBBPage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-white">Usage-Based Billing</h1>
           <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-            Post usage events · billed per unit via Stripe · invoiced at period end
+            Post usage events · billed per unit via {payLabel} · invoiced at period end
           </p>
         </div>
         <button onClick={() => setShowCreate(true)}
@@ -462,11 +471,11 @@ export default function UBBPage() {
           </div>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-violet-500 dark:text-violet-400">Invoice</p>
-            <p className="font-semibold text-violet-900 dark:text-violet-200">Stripe · monthly · auto-charge</p>
+            <p className="font-semibold text-violet-900 dark:text-violet-200">{payLabel} · monthly · auto-charge</p>
           </div>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-violet-500 dark:text-violet-400">Default rate</p>
-            <p className="font-semibold text-violet-900 dark:text-violet-200">$0.0004 per unit</p>
+            <p className="font-semibold text-violet-900 dark:text-violet-200">₹0.0004 per unit</p>
           </div>
         </div>
       </div>
@@ -506,7 +515,7 @@ export default function UBBPage() {
 
         <div className="space-y-4">
           <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300">Invoice Preview</h2>
-          <InvoicePreviewPanel />
+          {payMode !== 'razorpay' && <InvoicePreviewPanel />}
 
           <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 space-y-3">
             <p className="text-xs font-bold text-gray-700 dark:text-gray-300">How it works</p>
@@ -514,7 +523,7 @@ export default function UBBPage() {
               ['1', 'Create a stream — get a unique API key'],
               ['2', 'Post usage events (units) from your app'],
               ['3', 'Each unit is recorded and priced at your rate'],
-              ['4', 'Stripe invoices total units × rate at period end'],
+              ['4', `${payLabel} invoices total units × rate at period end`],
             ].map(([n, t]) => (
               <div key={n} className="flex gap-2.5">
                 <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-900/40 text-[10px] font-black text-violet-600 dark:text-violet-400">{n}</span>

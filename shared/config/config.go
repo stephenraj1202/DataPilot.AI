@@ -68,16 +68,37 @@ type ServicesConfig struct {
 	AIQueryEngineURL  string
 }
 
+type RazorpayConfig struct {
+	KeyID         string
+	KeySecret     string
+	WebhookSecret string
+	SuccessURL    string
+	CancelURL     string
+}
+
+type RazorpayPlansConfig struct {
+	BasePlanID       string
+	ProPlanID        string
+	EnterprisePlanID string
+}
+
+type PaymentConfig struct {
+	Mode string // "stripe" or "razorpay"
+}
+
 type Config struct {
-	Database    DatabaseConfig
-	Redis       RedisConfig
-	Stripe      StripeConfig
-	StripePlans StripePlansConfig
-	Mail        MailConfig
-	AI          AIConfig
-	Encryption  EncryptionConfig
-	Auth        AuthConfig
-	Services    ServicesConfig
+	Database      DatabaseConfig
+	Redis         RedisConfig
+	Stripe        StripeConfig
+	StripePlans   StripePlansConfig
+	Razorpay      RazorpayConfig
+	RazorpayPlans RazorpayPlansConfig
+	Payment       PaymentConfig
+	Mail          MailConfig
+	AI            AIConfig
+	Encryption    EncryptionConfig
+	Auth          AuthConfig
+	Services      ServicesConfig
 }
 
 func Load(configPath string) (*Config, error) {
@@ -130,6 +151,30 @@ func Load(configPath string) (*Config, error) {
 		BasePriceID:       spSection.Key("base_price_id").String(),
 		ProPriceID:        spSection.Key("pro_price_id").String(),
 		EnterprisePriceID: spSection.Key("enterprise_price_id").String(),
+	}
+
+	// Load Razorpay config
+	rzpSection := cfg.Section("razorpay")
+	config.Razorpay = RazorpayConfig{
+		KeyID:         rzpSection.Key("key_id").String(),
+		KeySecret:     rzpSection.Key("key_secret").String(),
+		WebhookSecret: rzpSection.Key("webhook_secret").String(),
+		SuccessURL:    rzpSection.Key("success_url").MustString(config.Stripe.SuccessURL),
+		CancelURL:     rzpSection.Key("cancel_url").MustString(config.Stripe.CancelURL),
+	}
+
+	// Load Razorpay plan IDs
+	rzpPlansSection := cfg.Section("razorpay_plans")
+	config.RazorpayPlans = RazorpayPlansConfig{
+		BasePlanID:       rzpPlansSection.Key("base_plan_id").String(),
+		ProPlanID:        rzpPlansSection.Key("pro_plan_id").String(),
+		EnterprisePlanID: rzpPlansSection.Key("enterprise_plan_id").String(),
+	}
+
+	// Load Payment mode config
+	paySection := cfg.Section("payment")
+	config.Payment = PaymentConfig{
+		Mode: paySection.Key("mode").MustString("stripe"),
 	}
 
 	// Load Mail config

@@ -118,6 +118,19 @@ func (h *RegisterHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// Seed a free subscription for the new account so billing page loads immediately
+	var freePlanID string
+	freePlanErr := h.DB.QueryRow(`SELECT id FROM subscription_plans WHERE name='free' LIMIT 1`).Scan(&freePlanID)
+	if freePlanErr == nil && freePlanID != "" {
+		subID := uuid.New().String()
+		_, _ = tx.Exec(
+			`INSERT INTO stripe_subscriptions
+			 (id, account_id, stripe_subscription_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY), NOW(), NOW())`,
+			subID, accountID, "free_"+accountID, freePlanID,
+		)
+	}
+
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete registration"})

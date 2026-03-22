@@ -1,10 +1,16 @@
-export function formatCurrency(amount: number, currency = 'USD'): string {
-  return new Intl.NumberFormat('en-US', {
+export function formatCurrency(amount: number, currency = 'INR'): string {
+  const locale = currency === 'INR' ? 'en-IN' : 'en-US'
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount)
+}
+
+// Format paise (1 INR = 100 paise) to ₹ string
+export function formatPaise(paise: number): string {
+  return formatCurrency(paise / 100, 'INR')
 }
 
 export function formatDate(dateStr: string): string {

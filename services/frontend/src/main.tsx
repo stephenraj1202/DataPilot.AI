@@ -25,6 +25,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           style: {
             background: '#363636',
             color: '#fff',
+            maxWidth: '360px',
+          },
+          success: {
+            iconTheme: { primary: '#22c55e', secondary: '#fff' },
+          },
+          error: {
+            duration: 6000,
+            iconTheme: { primary: '#ef4444', secondary: '#fff' },
           },
         }}
       />

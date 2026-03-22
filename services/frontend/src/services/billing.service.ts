@@ -17,6 +17,13 @@ export interface Subscription {
   current_period_start: string
   current_period_end: string
   cancel_at_period_end: boolean
+  // Razorpay live fields
+  razorpay_sub_id?: string
+  next_charge_at?: string
+  next_charge_amount?: number  // paise
+  remaining_count?: number
+  paid_count?: number
+  razorpay_status?: string
 }
 
 export interface Invoice {
@@ -27,6 +34,19 @@ export interface Invoice {
   status: string
   invoice_pdf_url: string | null
   created_at: string
+}
+
+export interface RazorpayPayment {
+  id: string
+  payment_id: string
+  amount: number  // paise
+  currency: string
+  status: string
+  created_at: string
+  paid_at?: string
+  billing_start?: string
+  billing_end?: string
+  short_url?: string
 }
 
 export const billingService = {
@@ -58,6 +78,29 @@ export const billingService = {
     return data
   },
 
+  async getPaymentMode(): Promise<{ mode: 'stripe' | 'razorpay' }> {
+    const { data } = await api.get('/api/billing/payment-mode')
+    return data
+  },
+
+  async createRazorpayOrder(planName: string): Promise<{
+    subscription_id: string; order_id: string; amount: number; currency: string; key_id: string; plan_name: string
+  }> {
+    const { data } = await api.post('/api/billing/razorpay/order', { plan_name: planName })
+    return data
+  },
+
+  async verifyRazorpayPayment(payload: {
+    razorpay_subscription_id?: string
+    razorpay_order_id?: string
+    razorpay_payment_id: string
+    razorpay_signature: string
+    plan_name: string
+  }): Promise<{ plan: string; status: string }> {
+    const { data } = await api.post('/api/billing/razorpay/verify', payload)
+    return data
+  },
+
   async updateSubscription(newPlan: string): Promise<{ proration_amount: number; effective_date: string }> {
     const { data } = await api.put('/api/billing/subscription', { new_plan: newPlan })
     return data
@@ -73,6 +116,11 @@ export const billingService = {
     return data.url
   },
 
+  async getRazorpayPayments(): Promise<{ payments: RazorpayPayment[] }> {
+    const { data } = await api.get('/api/billing/razorpay/payments')
+    return data
+  },
+
   async getNextBillSummary(): Promise<{
     plan_name: string
     billing_period: string
@@ -80,6 +128,7 @@ export const billingService = {
     active_overage_usd: number
     deleted_revenue_usd: number
     total_usd: number
+    currency: string
   }> {
     const { data } = await api.get('/api/billing/ubb/next-bill')
     return data

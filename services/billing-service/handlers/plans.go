@@ -32,7 +32,7 @@ var defaultPlans = []Plan{
 	},
 	{
 		Name:                   "base",
-		PriceCents:             1000,
+		PriceCents:             99900, // ₹999 in paise
 		StripePriceID:          "",
 		MaxCloudAccounts:       intPtr(3),
 		MaxDatabaseConnections: intPtr(5),
@@ -41,7 +41,7 @@ var defaultPlans = []Plan{
 	},
 	{
 		Name:                   "pro",
-		PriceCents:             2000,
+		PriceCents:             199900, // ₹1999 in paise
 		StripePriceID:          "",
 		MaxCloudAccounts:       intPtr(10),
 		MaxDatabaseConnections: nil,
@@ -50,7 +50,7 @@ var defaultPlans = []Plan{
 	},
 	{
 		Name:                   "enterprise",
-		PriceCents:             5000,
+		PriceCents:             499900, // ₹4999 in paise
 		StripePriceID:          "",
 		MaxCloudAccounts:       nil,
 		MaxDatabaseConnections: nil,
@@ -89,7 +89,12 @@ func SeedPlans(db *sql.DB, priceIDs ...map[string]string) error {
 					p.StripePriceID, p.Name,
 				)
 			}
-			log.Printf("Plan '%s' already exists, skipping seed", p.Name)
+			// Always sync price_cents to keep INR amounts current
+			_, _ = db.Exec(
+				`UPDATE subscription_plans SET price_cents=? WHERE name=?`,
+				p.PriceCents, p.Name,
+			)
+			log.Printf("Plan '%s' already exists, updated price_cents=%d", p.Name, p.PriceCents)
 			continue
 		}
 

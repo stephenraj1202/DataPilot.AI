@@ -148,6 +148,20 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 	}
 
 	subID := creds["subscription_id"]
+
+	// Try Cost Management API first, fall back to Consumption API on 403
+	entries, err := azureFetchCostManagement(token, subID, start, end)
+	if err != nil {
+		if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "AuthorizationFailed") {
+			log.Printf("[azure] Cost Management API unauthorized, falling back to Consumption API")
+			return azureFetchConsumption(token, subID, start, end)
+		}
+		return nil, err
+	}
+	return entries, nil
+}
+
+func azureFetchCostManagement(token, subID string, start, end time.Time) ([]CostEntry, error) {
 	apiURL := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.CostManagement/query?api-version=2023-11-01",
 		subID,
@@ -178,7 +192,7 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 		return result.Properties.Rows, result.Properties.Columns, nil
 	}
 
-	// ── Query 1: total per service (granularity=None, like reference code) ──
+	// Query 1: total per service
 	svcPayload, _ := json.Marshal(map[string]interface{}{
 		"type":      "Usage",
 		"timeframe": "Custom",
@@ -201,7 +215,6 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 		return nil, fmt.Errorf("Azure Cost API (services): %w", err)
 	}
 
-	// Find column indices dynamically
 	colIdx := map[string]int{}
 	for i, col := range svcCols {
 		colIdx[col.Name] = i
@@ -209,7 +222,6 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 	costIdx := colIdx["PreTaxCost"]
 	svcIdx := colIdx["ServiceName"]
 
-	// Build service→cost map
 	type svcCost struct {
 		name string
 		cost float64
@@ -234,8 +246,7 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 		return nil, nil
 	}
 
-	// ── Query 2: daily totals (granularity=Daily, no grouping) ──
-	// Used to distribute service costs across days proportionally.
+	// Query 2: daily totals
 	dailyPayload, _ := json.Marshal(map[string]interface{}{
 		"type":      "Usage",
 		"timeframe": "Custom",
@@ -252,12 +263,10 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 	})
 	dailyRows, dailyCols, err := doQuery(dailyPayload)
 	if err != nil {
-		// Daily query failed — fall back to spreading evenly across days
 		log.Printf("[azure] daily query failed, spreading evenly: %v", err)
 		dailyRows = nil
 	}
 
-	// Parse daily totals
 	type dayTotal struct {
 		date time.Time
 		cost float64
@@ -270,7 +279,6 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 		}
 		dCostIdx := dColIdx["PreTaxCost"]
 		dDateIdx := dColIdx["UsageDate"]
-
 		for _, row := range dailyRows {
 			if len(row) < 2 {
 				continue
@@ -293,7 +301,6 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 		}
 	}
 
-	// If no daily data, create one entry per day with even split
 	if len(days) == 0 {
 		numDays := int(end.Sub(start).Hours()/24) + 1
 		if numDays < 1 {
@@ -305,13 +312,11 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 		}
 	}
 
-	// Compute daily total for proportional split
 	var dailySum float64
 	for _, d := range days {
 		dailySum += d.cost
 	}
 
-	// Build entries: for each service, split its total across days proportionally
 	var entries []CostEntry
 	for _, svc := range services {
 		for _, day := range days {
@@ -335,8 +340,96 @@ func (a *azureProvider) FetchCosts(creds map[string]string, start, end time.Time
 		}
 	}
 
-	log.Printf("[azure] FetchCosts %s→%s: %d services, %.2f total, %d entries",
+	log.Printf("[azure] CostManagement %s→%s: %d services, %.2f total, %d entries",
 		start.Format("2006-01-02"), end.Format("2006-01-02"), len(services), totalCost, len(entries))
+	return entries, nil
+}
+
+// azureFetchConsumption uses the Consumption UsageDetails API (requires Billing Reader role).
+func azureFetchConsumption(token, subID string, start, end time.Time) ([]CostEntry, error) {
+	// Consumption API — paginate through all usage details
+	apiURL := fmt.Sprintf(
+		"https://management.azure.com/subscriptions/%s/providers/Microsoft.Consumption/usageDetails?api-version=2023-03-01&$filter=properties/usageStart ge '%s' and properties/usageEnd le '%s'&$top=1000",
+		subID,
+		start.Format("2006-01-02"),
+		end.Format("2006-01-02"),
+	)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+
+	// service → day → cost
+	type key struct {
+		svc string
+		day string
+	}
+	costMap := map[key]float64{}
+
+	for apiURL != "" {
+		req, _ := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("Azure Consumption API: %w", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("Azure Consumption API: HTTP %d: %s", resp.StatusCode, string(body))
+		}
+
+		var page struct {
+			Value []struct {
+				Properties struct {
+					UsageStart      string  `json:"usageStart"`
+					ConsumedService string  `json:"consumedService"`
+					PretaxCost      float64 `json:"pretaxCost"`
+					BillingCurrency string  `json:"billingCurrency"`
+				} `json:"properties"`
+			} `json:"value"`
+			NextLink string `json:"nextLink"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("Azure Consumption parse: %w", err)
+		}
+
+		for _, item := range page.Value {
+			if item.Properties.PretaxCost < 0.0000000001 {
+				continue
+			}
+			day := ""
+			if len(item.Properties.UsageStart) >= 10 {
+				day = item.Properties.UsageStart[:10]
+			}
+			svc := item.Properties.ConsumedService
+			if svc == "" {
+				svc = "Unknown"
+			}
+			costMap[key{svc: svc, day: day}] += item.Properties.PretaxCost
+		}
+
+		apiURL = page.NextLink
+	}
+
+	var entries []CostEntry
+	for k, amount := range costMap {
+		if amount < 0.0000000001 {
+			continue
+		}
+		date, err := time.Parse("2006-01-02", k.day)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, CostEntry{
+			Date:       date,
+			Service:    k.svc,
+			ResourceID: fmt.Sprintf("azure-%s", k.svc),
+			Region:     "azure",
+			Amount:     amount,
+			Currency:   "USD",
+		})
+	}
+
+	log.Printf("[azure] Consumption API %s→%s: %d entries", start.Format("2006-01-02"), end.Format("2006-01-02"), len(entries))
 	return entries, nil
 }
 

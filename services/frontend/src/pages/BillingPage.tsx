@@ -4,9 +4,10 @@ import { useLocation } from 'react-router-dom'
 import { billingService } from '../services/billing.service'
 import { ubbService } from '../services/ubb.service'
 import LoadingSpinner from '../components/common/LoadingSpinner'
-import { formatCurrency, formatDate } from '../utils/formatters'
+import { formatCurrency, formatPaise, formatDate } from '../utils/formatters'
 import { CheckCircle, Download, Zap, Shield, Building2, Sparkles, AlertTriangle, Receipt, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { usePaymentMode } from '../hooks/usePaymentMode'
 
 const PLAN_META: Record<string, {
   label: string
@@ -46,6 +47,13 @@ export default function BillingPage() {
   const location = useLocation()
   const trialExpired = (location.state as { trialExpired?: boolean })?.trialExpired ?? false
   const [stripeLoading, setStripeLoading] = useState<string | null>(null)
+  const { label: payLabel } = usePaymentMode()
+
+  const { data: paymentMode } = useQuery({
+    queryKey: ['payment-mode'],
+    queryFn: () => billingService.getPaymentMode(),
+    staleTime: Infinity,
+  })
 
   const { data: subData, isLoading: subLoading, refetch } = useQuery({
     queryKey: ['subscription'],
@@ -60,13 +68,21 @@ export default function BillingPage() {
   const { data: invoicesData, isLoading: invoicesLoading } = useQuery({
     queryKey: ['invoices'],
     queryFn: () => billingService.getInvoices(),
+    enabled: paymentMode?.mode !== 'razorpay',
+  })
+
+  const { data: rzpPaymentsData, isLoading: rzpPaymentsLoading } = useQuery({
+    queryKey: ['razorpay-payments'],
+    queryFn: () => billingService.getRazorpayPayments(),
+    enabled: paymentMode?.mode === 'razorpay',
   })
 
   const { data: upcomingInvoice, isLoading: upcomingLoading, refetch: refetchUpcoming } = useQuery({
     queryKey: ['upcoming-invoice'],
     queryFn: () => ubbService.previewInvoice(),
     staleTime: 30_000,
-    enabled: !!subData?.subscription,
+    // Only fetch Stripe preview when on Stripe mode — Razorpay has no Stripe invoice
+    enabled: !!subData?.subscription && paymentMode?.mode !== 'razorpay',
   })
 
   // nextBill is a fallback for when Stripe preview is unavailable (local/free plans)
@@ -87,14 +103,50 @@ export default function BillingPage() {
     if (plan.name === 'free') return
     setStripeLoading(plan.name)
     try {
-      const result = await billingService.createCheckoutSession(plan.name)
-      // local=true means no Stripe price configured — backend activated plan directly
-      if ((result as any).local) {
-        await refetch()
-        toast.success(`Upgraded to ${plan.name} plan`)
-        setStripeLoading(null)
+      if (paymentMode?.mode === 'razorpay') {
+        // Razorpay recurring subscription flow
+        const order = await billingService.createRazorpayOrder(plan.name)
+        const rzp = new (window as any).Razorpay({
+          key: order.key_id,
+          subscription_id: order.subscription_id,
+          name: 'DataPilot.AI',
+          description: `${plan.name} plan — monthly recurring`,
+          recurring: 1,
+          handler: async (response: {
+            razorpay_subscription_id?: string
+            razorpay_payment_id: string
+            razorpay_signature: string
+          }) => {
+            try {
+              await billingService.verifyRazorpayPayment({
+                razorpay_subscription_id: response.razorpay_subscription_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                plan_name: plan.name,
+              })
+              await refetch()
+              toast.success(`Upgraded to ${plan.name} plan`)
+            } catch (err: unknown) {
+              console.error('[razorpay] verify failed:', err)
+              const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Payment verification failed'
+              toast.error(msg)
+            } finally {
+              setStripeLoading(null)
+            }
+          },
+          modal: { ondismiss: () => setStripeLoading(null) },
+        })
+        rzp.open()
       } else {
-        window.location.href = result.checkout_url
+        // Stripe flow
+        const result = await billingService.createCheckoutSession(plan.name)
+        if ((result as any).local) {
+          await refetch()
+          toast.success(`Upgraded to ${plan.name} plan`)
+          setStripeLoading(null)
+        } else {
+          window.location.href = result.checkout_url
+        }
       }
     } catch {
       toast.error('Failed to start checkout. Please try again.')
@@ -142,7 +194,7 @@ export default function BillingPage() {
                 {PLAN_META[currentPlan?.name ?? '']?.label ?? currentPlan?.name ?? 'Free'}
               </p>
               <p className="text-sm text-gray-500">
-                {currentPlan?.price_cents ? `${formatCurrency(currentPlan.price_cents / 100)}/month` : 'Free'}
+                {currentPlan?.price_cents ? `${formatPaise(currentPlan.price_cents)}/month` : 'Free'}
               </p>
             </div>
             <div className="flex flex-col items-end gap-2">
@@ -150,11 +202,39 @@ export default function BillingPage() {
                 sub.status === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                 : 'bg-yellow-100 text-yellow-700'
               }`}>
-                {sub.status}
+                {sub.razorpay_status ?? sub.status}
               </span>
-              <p className="text-xs text-gray-400">Renews {formatDate(sub.current_period_end)}</p>
+              <p className="text-xs text-gray-400">
+                Next charge {formatDate(sub.next_charge_at ?? sub.current_period_end)}
+              </p>
             </div>
           </div>
+
+          {/* Razorpay live details */}
+          {sub.razorpay_sub_id && (
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div className="rounded-xl bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2.5 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-400">Next charge</p>
+                <p className="mt-0.5 text-lg font-black text-indigo-700 dark:text-indigo-300">
+                  {sub.next_charge_amount ? formatPaise(sub.next_charge_amount) : formatPaise(currentPlan?.price_cents ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-gray-50 dark:bg-gray-700/40 px-3 py-2.5 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Charge date</p>
+                <p className="mt-0.5 text-sm font-bold text-gray-700 dark:text-gray-300">
+                  {sub.next_charge_at ? formatDate(sub.next_charge_at) : formatDate(sub.current_period_end)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-gray-50 dark:bg-gray-700/40 px-3 py-2.5 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Payments made</p>
+                <p className="mt-0.5 text-lg font-black text-gray-700 dark:text-gray-300">{sub.paid_count ?? '—'}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 dark:bg-gray-700/40 px-3 py-2.5 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Remaining</p>
+                <p className="mt-0.5 text-lg font-black text-gray-700 dark:text-gray-300">{sub.remaining_count ?? '—'}</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -183,9 +263,33 @@ export default function BillingPage() {
           {upcomingLoading || nextBillLoading ? (
             <div className="flex justify-center py-4"><LoadingSpinner size="md" /></div>
           ) : (() => {
+            // Razorpay mode: use live next_charge_amount + next_charge_at from subscription
+            if (paymentMode?.mode === 'razorpay' && sub?.razorpay_sub_id) {
+              const amount = sub.next_charge_amount ?? currentPlan?.price_cents ?? 0
+              const dueDate = sub.next_charge_at ?? sub.current_period_end
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-end justify-between rounded-xl bg-indigo-50 dark:bg-indigo-900/20 px-4 py-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500 dark:text-indigo-400">Amount Due</p>
+                      <p className="text-3xl font-black text-indigo-700 dark:text-indigo-300">{formatPaise(amount)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-400">Due {formatDate(dueDate)}</p>
+                      <p className="text-xs text-gray-400 uppercase">INR · Razorpay</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <p className="text-sm text-gray-700 dark:text-gray-300 capitalize">
+                      {currentPlan?.name ?? 'Plan'} — monthly recurring
+                    </p>
+                    <p className="text-sm font-bold text-gray-900 dark:text-white">{formatPaise(amount)}</p>
+                  </div>
+                </div>
+              )
+            }
+
             const preview = upcomingInvoice?.preview
-            // Stripe preview is the source of truth when available (has real usage from Stripe)
-            // Fall back to nextBill (local DB) for local/free plans with no Stripe subscription
             const hasStripe = !!preview
             const totalUsd = hasStripe
               ? preview!.amount_due
@@ -198,7 +302,7 @@ export default function BillingPage() {
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500 dark:text-indigo-400">Amount Due</p>
                     <p className="text-3xl font-black text-indigo-700 dark:text-indigo-300">
-                      {formatCurrency(totalUsd)}
+                      {formatCurrency(totalUsd, 'INR')}
                     </p>
                   </div>
                   <div className="text-right">
@@ -209,7 +313,7 @@ export default function BillingPage() {
                     ) : (
                       <p className="text-xs text-gray-400">Due {formatDate(sub.current_period_end)}</p>
                     )}
-                    <p className="text-xs text-gray-400 uppercase">{hasStripe ? preview!.currency : 'usd'}</p>
+                    <p className="text-xs text-gray-400 uppercase">{hasStripe ? preview!.currency.toUpperCase() : 'INR'}</p>
                   </div>
                 </div>
 
@@ -226,7 +330,7 @@ export default function BillingPage() {
                           )}
                         </div>
                         <p className="text-sm font-bold flex-shrink-0 text-gray-900 dark:text-white">
-                          {formatCurrency(line.amount_usd)}
+                          {formatCurrency(line.amount_usd, 'INR')}
                         </p>
                       </div>
                     ))
@@ -238,19 +342,19 @@ export default function BillingPage() {
                           <p className="text-sm text-gray-700 dark:text-gray-300 capitalize">
                             {nextBill?.plan_name ?? currentPlan?.name ?? 'Plan'} — monthly recurring
                           </p>
-                          <p className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(nextBill!.flat_fee_usd)}</p>
+                          <p className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(nextBill!.flat_fee_usd, 'INR')}</p>
                         </div>
                       )}
                       {(nextBill?.active_overage_usd ?? 0) > 0 && (
                         <div className="flex items-center justify-between gap-3 py-2.5">
                           <p className="text-sm text-gray-700 dark:text-gray-300">Usage overage</p>
-                          <p className="text-sm font-bold text-red-600 dark:text-red-400">{formatCurrency(nextBill!.active_overage_usd)}</p>
+                          <p className="text-sm font-bold text-red-600 dark:text-red-400">{formatCurrency(nextBill!.active_overage_usd, 'INR')}</p>
                         </div>
                       )}
                       {(nextBill?.deleted_revenue_usd ?? 0) > 0 && (
                         <div className="flex items-center justify-between gap-3 py-2.5">
                           <p className="text-sm text-gray-700 dark:text-gray-300">Deleted streams — accrued usage</p>
-                          <p className="text-sm font-bold text-orange-600 dark:text-orange-400">{formatCurrency(nextBill!.deleted_revenue_usd)}</p>
+                          <p className="text-sm font-bold text-orange-600 dark:text-orange-400">{formatCurrency(nextBill!.deleted_revenue_usd, 'INR')}</p>
                         </div>
                       )}
                       {totalUsd === 0 && (
@@ -306,7 +410,7 @@ export default function BillingPage() {
                   </div>
                   <div className="mt-3">
                     <span className="text-3xl font-extrabold">
-                      {plan.price_cents === 0 ? 'Free' : formatCurrency(plan.price_cents / 100)}
+                      {plan.price_cents === 0 ? 'Free' : formatPaise(plan.price_cents)}
                     </span>
                     {plan.price_cents > 0 && <span className="ml-1 text-sm opacity-80">/mo</span>}
                   </div>
@@ -355,7 +459,7 @@ export default function BillingPage() {
                     )}
                     {isPaid && !isCurrent && !isDowngrade && (
                       <p className="mt-2 text-center text-xs text-gray-400">
-                        Billed via Stripe · {formatCurrency(plan.price_cents / 100)}/mo
+                        Billed via {payLabel} · {formatPaise(plan.price_cents)}/mo
                       </p>
                     )}
                     {(isDowngrade || isFreeWhilePaid) && !isCurrent && (
@@ -374,49 +478,102 @@ export default function BillingPage() {
       {/* Invoice history */}
       <div>
         <h2 className="mb-3 text-lg font-semibold text-gray-900 dark:text-white">Invoice History</h2>
-        {invoicesLoading ? (
-          <LoadingSpinner size="md" />
-        ) : !invoicesData?.invoices?.length ? (
-          <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center dark:border-gray-700 dark:bg-gray-800">
-            <p className="text-sm text-gray-400">No invoices yet. They'll appear here once you're on a paid plan.</p>
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-gray-700">
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Date</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Amount</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Status</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">PDF</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
-                {invoicesData.invoices.map(inv => (
-                  <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                    <td className="px-5 py-3 text-gray-700 dark:text-gray-300">{formatDate(inv.created_at)}</td>
-                    <td className="px-5 py-3 font-medium text-gray-900 dark:text-white">{formatCurrency(inv.amount_cents / 100, inv.currency)}</td>
-                    <td className="px-5 py-3">
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        inv.status === 'paid' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                        : inv.status === 'open' ? 'bg-yellow-100 text-yellow-700'
-                        : 'bg-gray-100 text-gray-600'
-                      }`}>
-                        {inv.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">
-                      {inv.invoice_pdf_url ? (
-                        <a href={inv.invoice_pdf_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-indigo-600 hover:underline dark:text-indigo-400">
-                          <Download className="h-4 w-4" /> PDF
-                        </a>
-                      ) : <span className="text-gray-400">—</span>}
-                    </td>
+        {paymentMode?.mode === 'razorpay' ? (
+          rzpPaymentsLoading ? (
+            <LoadingSpinner size="md" />
+          ) : !rzpPaymentsData?.payments?.length ? (
+            <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center dark:border-gray-700 dark:bg-gray-800">
+              <p className="text-sm text-gray-400">No payments yet. They'll appear here once you're on a paid plan.</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 dark:border-gray-700">
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Billing Period</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Payment ID</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Amount</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Paid On</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Status</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Invoice</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                  {rzpPaymentsData.payments.map(p => (
+                    <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                      <td className="px-5 py-3 text-gray-700 dark:text-gray-300">
+                        {p.billing_start && p.billing_end
+                          ? `${formatDate(p.billing_start)} – ${formatDate(p.billing_end)}`
+                          : formatDate(p.created_at)}
+                      </td>
+                      <td className="px-5 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{p.payment_id || '—'}</td>
+                      <td className="px-5 py-3 font-medium text-gray-900 dark:text-white">{formatPaise(p.amount)}</td>
+                      <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{p.paid_at ? formatDate(p.paid_at) : '—'}</td>
+                      <td className="px-5 py-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          p.status === 'paid' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                          : p.status === 'partially_paid' ? 'bg-blue-100 text-blue-700'
+                          : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3">
+                        {p.short_url
+                          ? <a href={p.short_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-indigo-600 hover:underline dark:text-indigo-400"><Download className="h-4 w-4" /> View</a>
+                          : <span className="text-gray-400">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : (
+          invoicesLoading ? (
+            <LoadingSpinner size="md" />
+          ) : !invoicesData?.invoices?.length ? (
+            <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center dark:border-gray-700 dark:bg-gray-800">
+              <p className="text-sm text-gray-400">No invoices yet. They'll appear here once you're on a paid plan.</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 dark:border-gray-700">
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Date</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Amount</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Status</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">PDF</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                  {invoicesData.invoices.map(inv => (
+                    <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                      <td className="px-5 py-3 text-gray-700 dark:text-gray-300">{formatDate(inv.created_at)}</td>
+                      <td className="px-5 py-3 font-medium text-gray-900 dark:text-white">{formatCurrency(inv.amount_cents / 100, inv.currency?.toUpperCase() === 'INR' ? 'INR' : 'INR')}</td>
+                      <td className="px-5 py-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          inv.status === 'paid' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                          : inv.status === 'open' ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3">
+                        {inv.invoice_pdf_url ? (
+                          <a href={inv.invoice_pdf_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-indigo-600 hover:underline dark:text-indigo-400">
+                            <Download className="h-4 w-4" /> PDF
+                          </a>
+                        ) : <span className="text-gray-400">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
         )}
       </div>
     </div>

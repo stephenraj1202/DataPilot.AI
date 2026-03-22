@@ -20,7 +20,7 @@ export interface UsageSummary {
   total_usage: number
   included_units: number
   overage_units: number
-  overage_cost_usd: string
+  overage_cost_inr: string
   overage_price_cents: number
   period_start: number
   period_end: number

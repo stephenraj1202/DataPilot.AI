@@ -73,7 +73,7 @@ const FEATURES = [
 const PLANS = [
   {
     name: 'Free',
-    price: '$0',
+    price: '₹0',
     period: '/month',
     badge: null,
     color: 'border-gray-700',
@@ -83,7 +83,7 @@ const PLANS = [
   },
   {
     name: 'Base',
-    price: '$10',
+    price: '₹999',
     period: '/month',
     badge: null,
     color: 'border-gray-700',
@@ -93,7 +93,7 @@ const PLANS = [
   },
   {
     name: 'Pro',
-    price: '$20',
+    price: '₹1,999',
     period: '/month',
     badge: 'Most Popular',
     color: 'border-indigo-500 ring-2 ring-indigo-500/40',
@@ -103,7 +103,7 @@ const PLANS = [
   },
   {
     name: 'Enterprise',
-    price: '$50',
+    price: '₹4,999',
     period: '/month',
     badge: null,
     color: 'border-gray-700',
@@ -186,7 +186,7 @@ const UBB_STEPS = [
     color: 'from-cyan-500 to-blue-400',
     step: '02',
     title: 'Post usage from your app',
-    desc: 'Instrument your SaaS with a single API call. Every unit posted is recorded and priced — Stripe meters every event.',
+    desc: 'Instrument your SaaS with a single API call. Every unit posted is recorded and priced — metered automatically.',
     code: `POST /billing/ubb/streams/:id/usage
 {
   "quantity": 250,
@@ -200,20 +200,20 @@ const UBB_STEPS = [
     title: 'Preview next invoice',
     desc: 'Run a live preview anytime. See exactly what will be charged: plan flat fee + total units × per-unit rate.',
     code: `GET /billing/ubb/invoice/dryrun
-→ flat_fee_usd:  20.00
-→ usage_usd:      4.62
-→ total_usd:     24.62`,
+→ flat_fee_inr:  1999.00
+→ usage_inr:      385.00
+→ total_inr:     2384.00`,
   },
   {
     icon: CreditCard,
     color: 'from-orange-500 to-amber-400',
     step: '04',
-    title: 'Automatic Stripe invoicing',
-    desc: 'Stripe invoices total units × rate at period end. Auto-charged to saved card or via hosted invoice link.',
+    title: 'Automatic invoicing',
+    desc: 'Invoices total units × rate at period end. Auto-charged to saved card or via hosted invoice link.',
     code: `POST /billing/ubb/invoice/pay
 → paid: true
-→ total_usd: 24.62
-→ invoice_url: stripe.com/...`,
+→ total_inr: 2384.00
+→ invoice_url: payment-gateway.com/...`,
   },
 ]
 
@@ -232,7 +232,7 @@ function UBBSection() {
             <span className="bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">Bill what you use.</span>
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-gray-400">
-            Built-in UBB engine lets you create metered streams, post usage events, and invoice customers automatically via Stripe — every unit posted goes straight to the next bill.
+            Built-in UBB engine lets you create metered streams, post usage events, and invoice customers automatically — every unit posted goes straight to the next bill.
           </p>
         </div>
 
@@ -281,11 +281,11 @@ function UBBSection() {
             </div>
             <div className="rounded-xl border border-white/10 bg-white/5 p-5 space-y-2.5 text-sm font-mono">
               {[
-                { label: 'Pro plan flat fee', value: '$20.00', muted: false },
-                { label: 'Stream A — 8,420 units', value: '$3.37', muted: false },
-                { label: '(8,420 × $0.0004)', value: '', muted: true, indent: true },
-                { label: 'Stream B — 1,250 units', value: '$1.25', muted: false },
-                { label: '(1,250 × $0.0010)', value: '', muted: true, indent: true },
+                { label: 'Pro plan flat fee', value: '₹1,999', muted: false },
+                { label: 'Stream A — 8,420 units', value: '₹336.80', muted: false },
+                { label: '(8,420 × ₹0.04)', value: '', muted: true, indent: true },
+                { label: 'Stream B — 1,250 units', value: '₹125.00', muted: false },
+                { label: '(1,250 × ₹0.10)', value: '', muted: true, indent: true },
               ].map((row, i) => (
                 <div key={i} className={`flex justify-between ${row.indent ? 'pl-3' : ''}`}>
                   <span className={row.muted ? 'text-gray-600' : 'text-gray-300'}>{row.label}</span>
@@ -293,7 +293,7 @@ function UBBSection() {
                 </div>
               ))}
               <div className="border-t border-white/10 pt-2.5 flex justify-between font-extrabold text-white">
-                <span>Total</span><span>$24.62</span>
+                <span>Total</span><span>₹2,460.80</span>
               </div>
             </div>
           </div>
@@ -413,7 +413,7 @@ const DEMO_SLIDES = [
     bg: 'bg-violet-500/10',
     border: 'border-violet-500/30',
     title: 'Usage-Based Billing, Built In',
-    desc: 'Create metered streams, post usage events via API, and let Stripe handle invoicing automatically. No third-party metering service needed.',
+    desc: 'Create metered streams, post usage events via API, and let the billing engine handle invoicing automatically. No third-party metering service needed.',
     screen: (
       <div className="h-full w-full bg-[#0f1117] rounded-xl p-4 font-mono text-xs overflow-hidden flex flex-col gap-3">
         <div className="flex items-center gap-2">
@@ -424,8 +424,8 @@ const DEMO_SLIDES = [
         </div>
         {/* Stream cards */}
         {[
-          { name: 'API Requests', units: 8420, rate: '$0.0004', billed: '$3.37' },
-          { name: 'Data Exports', units: 1250, rate: '$0.0010', billed: '$1.25' },
+          { name: 'API Requests', units: 8420, rate: '₹0.04', billed: '₹336.80' },
+          { name: 'Data Exports', units: 1250, rate: '₹0.10', billed: '₹125.00' },
         ].map(s => (
           <div key={s.name} className="rounded-lg bg-white/5 border border-white/10 p-2.5">
             <div className="flex items-center justify-between mb-1.5">
@@ -445,9 +445,9 @@ const DEMO_SLIDES = [
         <div className="rounded-lg bg-violet-500/10 border border-violet-500/30 p-2.5">
           <div className="flex justify-between items-center">
             <span className="text-[9px] text-violet-300">Next invoice (preview)</span>
-            <span className="text-sm font-black text-violet-300">$24.62</span>
+            <span className="text-sm font-black text-violet-300">₹2,460.80</span>
           </div>
-          <p className="text-[9px] text-gray-500 mt-0.5">Plan $20.00 + usage $4.62 · auto-charged Mar 31</p>
+          <p className="text-[9px] text-gray-500 mt-0.5">Plan ₹1,999 + usage ₹461.80 · auto-charged Mar 31</p>
         </div>
       </div>
     ),
@@ -826,7 +826,7 @@ export default function LandingPage() {
           >
             <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-indigo-400">Pricing</p>
             <h2 className="text-4xl font-extrabold tracking-tight">Simple, transparent pricing</h2>
-            <p className="mt-4 text-gray-400">Free plan forever. Paid plans via Stripe — cancel anytime.</p>
+            <p className="mt-4 text-gray-400">Free plan forever. Paid plans — cancel anytime.</p>
           </div>
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">

@@ -10,15 +10,15 @@ const SECTIONS = [
   },
   {
     title: '2. Information We Collect',
-    body: `We collect the following categories of information:\n\n• Account Information: Your name, email address, and profile picture obtained via Google OAuth when you sign in.\n\n• Cloud Credentials: Read-only API keys and access tokens for AWS, Azure, and GCP that you voluntarily provide to connect cloud accounts. These are encrypted at rest using AES-256.\n\n• Usage Data: Information about how you interact with the Service, including pages visited, queries executed, features used, and timestamps.\n\n• Billing Information: Payment method details are processed and stored by Stripe. We do not store full card numbers on our servers.\n\n• Log Data: IP addresses, browser type, operating system, referring URLs, and error logs for security and debugging purposes.`,
+    body: `We collect the following categories of information:\n\n• Account Information: Your name, email address, and profile picture obtained via Google OAuth when you sign in.\n\n• Cloud Credentials: Read-only API keys and access tokens for AWS, Azure, and GCP that you voluntarily provide to connect cloud accounts. These are encrypted at rest using AES-256.\n\n• Usage Data: Information about how you interact with the Service, including pages visited, queries executed, features used, and timestamps.\n\n• Billing Information: Payment method details are processed and stored by our payment processor. We do not store full card numbers on our servers.\n\n• Log Data: IP addresses, browser type, operating system, referring URLs, and error logs for security and debugging purposes.`,
   },
   {
     title: '3. How We Use Your Information',
-    body: `We use your information to:\n\n• Provide, operate, and improve the Service\n• Authenticate your identity and maintain your session\n• Process billing and subscription management via Stripe\n• Send transactional emails (account verification, billing receipts, password resets)\n• Detect and prevent fraud, abuse, and security incidents\n• Analyse aggregate usage patterns to improve product features\n• Comply with legal obligations`,
+    body: `We use your information to:\n\n• Provide, operate, and improve the Service\n• Authenticate your identity and maintain your session\n• Process billing and subscription management via our payment processor\n• Send transactional emails (account verification, billing receipts, password resets)\n• Detect and prevent fraud, abuse, and security incidents\n• Analyse aggregate usage patterns to improve product features\n• Comply with legal obligations`,
   },
   {
     title: '4. Data Sharing & Third Parties',
-    body: `We do not sell your personal data. We share data only with:\n\n• Stripe: For payment processing. Stripe's privacy policy applies to payment data.\n• Google: For OAuth authentication. Google's privacy policy applies to sign-in data.\n• Cloud Providers (AWS/Azure/GCP): Your credentials are used solely to fetch cost and resource data on your behalf.\n• Infrastructure Providers: Hosting and database services under strict data processing agreements.\n• Legal Authorities: When required by law, court order, or to protect our rights.`,
+    body: `We do not sell your personal data. We share data only with:\n\n• Payment Processor: For payment processing. Their privacy policy applies to payment data.\n• Google: For OAuth authentication. Google's privacy policy applies to sign-in data.\n• Cloud Providers (AWS/Azure/GCP): Your credentials are used solely to fetch cost and resource data on your behalf.\n• Infrastructure Providers: Hosting and database services under strict data processing agreements.\n• Legal Authorities: When required by law, court order, or to protect our rights.`,
   },
   {
     title: '5. Data Retention',
@@ -89,7 +89,7 @@ export default function PrivacyPage() {
               'We never sell your data to third parties.',
               'Cloud credentials are AES-256 encrypted and never shared.',
               'You can delete your account and data at any time.',
-              'We use Stripe for payments — we never store card numbers.',
+              'We use a secure payment processor — we never store card numbers.',
             ].map(item => (
               <li key={item} className="flex items-start gap-2">
                 <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-indigo-400" />

@@ -215,6 +215,9 @@ func (h *CloudAccountHandler) DeleteCloudAccount(c *gin.Context) {
 		return
 	}
 
+	// Also remove associated cost data so it no longer appears in summaries
+	_, _ = h.DB.Exec(`DELETE FROM cloud_costs WHERE cloud_account_id = ?`, cloudAccountID)
+
 	logAuditEvent(h.DB, userID, accountID, "delete", "cloud_account", cloudAccountID, c.ClientIP(), c.Request.UserAgent())
 	c.JSON(http.StatusOK, gin.H{"message": "cloud account deleted"})
 }

@@ -26,7 +26,7 @@ const SECTIONS = [
   },
   {
     title: '6. Billing & Payments',
-    body: `Paid plans are billed monthly via Stripe. All charges are in USD. You authorise us to charge your payment method on a recurring basis. Subscriptions auto-renew unless cancelled before the renewal date. Usage-based overage charges are calculated at the end of each billing period and charged separately. Refunds are issued at our discretion within 7 days of a charge for technical failures attributable to DataPilot.AI.`,
+    body: `Paid plans are billed monthly via our payment gateway. All charges are in USD. You authorise us to charge your payment method on a recurring basis. Subscriptions auto-renew unless cancelled before the renewal date. Usage-based overage charges are calculated at the end of each billing period and charged separately. Refunds are issued at our discretion within 7 days of a charge for technical failures attributable to DataPilot.AI.`,
   },
   {
     title: '7. Intellectual Property',
