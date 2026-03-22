@@ -14,7 +14,7 @@ const SECTIONS = [
   },
   {
     title: '3. Account Registration',
-    body: `You must sign in using a valid Google account. You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account. You agree to notify us immediately at support@datapilot.ai of any unauthorised use of your account.`,
+    body: `You must sign in using a valid Google account. You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account. You agree to notify us immediately at support@datapilot.co.in of any unauthorised use of your account.`,
   },
   {
     title: '4. Acceptable Use',
@@ -54,7 +54,7 @@ const SECTIONS = [
   },
   {
     title: '13. Contact',
-    body: `For questions about these Terms, contact us at:\n\nDataPilot.AI Legal Team\nEmail: legal@datapilot.ai\nAddress: 1234 Cloud Street, Suite 100, Wilmington, DE 19801, USA\nPhone: +1 (302) 555-0190`,
+    body: `For questions about these Terms, contact us at:\n\nDataPilot.AI Legal Team\nEmail: legal@datapilot.co.in\nAddress: 19/6, 4th Cross Street, Adambakkam, Chennai - 600088, India\nPhone: +91 9965099462`,
   },
 ]
 

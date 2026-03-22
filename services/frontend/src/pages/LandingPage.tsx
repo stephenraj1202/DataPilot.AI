@@ -904,9 +904,9 @@ export default function LandingPage() {
           </div>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             {[
-              { label: 'General Support', email: 'support@datapilot.ai', desc: 'Help with your account, billing, or the platform' },
-              { label: 'Sales & Enterprise', email: 'sales@datapilot.ai', desc: 'Custom plans, volume pricing, and enterprise contracts' },
-              { label: 'Privacy & Legal', email: 'legal@datapilot.ai', desc: 'Data requests, privacy concerns, and legal matters' },
+              { label: 'General Support', email: 'support@datapilot.co.in', desc: 'Help with your account, billing, or the platform' },
+              { label: 'Sales & Enterprise', email: 'sales@datapilot.co.in', desc: 'Custom plans, volume pricing, and enterprise contracts' },
+              { label: 'Privacy & Legal', email: 'legal@datapilot.co.in', desc: 'Data requests, privacy concerns, and legal matters' },
             ].map(c => (
               <div key={c.label} className="rounded-2xl border border-white/8 bg-white/[0.03] p-6 hover:border-indigo-500/30 hover:bg-white/[0.05] transition-all">
                 <p className="text-xs font-bold uppercase tracking-widest text-indigo-400 mb-2">{c.label}</p>
@@ -917,9 +917,9 @@ export default function LandingPage() {
           </div>
           <div className="mt-8 rounded-2xl border border-white/5 bg-white/[0.02] p-6 text-center">
             <p className="text-sm text-gray-500">
-              <span className="font-semibold text-gray-400">DataPilot.AI</span> · 1234 Cloud Street, Suite 100, Wilmington, DE 19801, USA
+              <span className="font-semibold text-gray-400">DataPilot.AI</span> · 19/6, 4th Cross Street, Adambakkam, Chennai - 600088, India
               <span className="mx-3 text-gray-700">·</span>
-              <a href="tel:+13025550190" className="hover:text-gray-400 transition-colors">+1 (302) 555-0190</a>
+              <a href="tel:+13025550190" className="hover:text-gray-400 transition-colors">+91 9965099462</a>
             </p>
           </div>
         </div>

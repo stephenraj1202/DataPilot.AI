@@ -157,7 +157,7 @@ export default function LoginPage() {
                   SK
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-white">Sarah K.</p>
+                  <p className="text-xs font-semibold text-white">Steffi S.</p>
                   <p className="text-[10px] text-gray-500">Head of FinOps, TechCorp</p>
                 </div>
               </div>

@@ -22,7 +22,7 @@ const SECTIONS = [
   },
   {
     title: '5. Data Retention',
-    body: `We retain your data for as long as your account is active or as needed to provide the Service. Specifically:\n\n• Account data: Retained until account deletion + 30 days\n• Cloud cost data: Retained for 24 months for trend analysis\n• Audit logs: Retained for 12 months\n• Billing records: Retained for 7 years as required by financial regulations\n\nYou may request deletion of your account and associated data at any time via Settings or by emailing privacy@datapilot.ai.`,
+    body: `We retain your data for as long as your account is active or as needed to provide the Service. Specifically:\n\n• Account data: Retained until account deletion + 30 days\n• Cloud cost data: Retained for 24 months for trend analysis\n• Audit logs: Retained for 12 months\n• Billing records: Retained for 7 years as required by financial regulations\n\nYou may request deletion of your account and associated data at any time via Settings or by emailing privacy@datapilot.co.in.`,
   },
   {
     title: '6. Security',
@@ -34,11 +34,11 @@ const SECTIONS = [
   },
   {
     title: '8. Your Rights',
-    body: `Depending on your jurisdiction, you may have the following rights:\n\n• Access: Request a copy of the personal data we hold about you\n• Correction: Request correction of inaccurate data\n• Deletion: Request deletion of your account and personal data\n• Portability: Request your data in a machine-readable format\n• Objection: Object to certain processing activities\n• Restriction: Request restriction of processing in certain circumstances\n\nTo exercise any of these rights, contact us at privacy@datapilot.ai. We will respond within 30 days.`,
+    body: `Depending on your jurisdiction, you may have the following rights:\n\n• Access: Request a copy of the personal data we hold about you\n• Correction: Request correction of inaccurate data\n• Deletion: Request deletion of your account and personal data\n• Portability: Request your data in a machine-readable format\n• Objection: Object to certain processing activities\n• Restriction: Request restriction of processing in certain circumstances\n\nTo exercise any of these rights, contact us at privacy@datapilot.co.in. We will respond within 30 days.`,
   },
   {
     title: '9. Children\'s Privacy',
-    body: `The Service is not directed to individuals under the age of 16. We do not knowingly collect personal information from children. If you believe we have inadvertently collected data from a child, please contact us immediately at privacy@datapilot.ai.`,
+    body: `The Service is not directed to individuals under the age of 16. We do not knowingly collect personal information from children. If you believe we have inadvertently collected data from a child, please contact us immediately at privacy@datapilot.co.in.`,
   },
   {
     title: '10. International Data Transfers',
@@ -50,7 +50,7 @@ const SECTIONS = [
   },
   {
     title: '12. Contact Us',
-    body: `For privacy-related questions, requests, or concerns:\n\nDataPilot.AI Privacy Team\nEmail: privacy@datapilot.ai\nAddress: 1234 Cloud Street, Suite 100, Wilmington, DE 19801, USA\nPhone: +1 (302) 555-0190\n\nFor EU/UK residents, our Data Protection Officer can be reached at dpo@datapilot.ai.`,
+    body: `For privacy-related questions, requests, or concerns:\n\nDataPilot.AI Privacy Team\nEmail: privacy@datapilot.co.in\nAddress: 19/6, 4th Cross Street, Adambakkam, Chennai - 600088, India\nPhone: +91 9965099462\n\nFor EU/UK residents, our Data Protection Officer can be reached at legal@datapilot.co.in.`,
   },
 ]
 

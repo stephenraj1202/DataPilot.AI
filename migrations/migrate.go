@@ -17,7 +17,7 @@ func main() {
 	host := getEnv("DB_HOST", "localhost")
 	port := getEnv("DB_PORT", "3306")
 	username := getEnv("DB_USERNAME", "root")
-	password := getEnv("DB_PASSWORD", "rootpassword")
+	password := getEnv("DB_PASSWORD", "MySQL123$$")
 	dbName := getEnv("DB_NAME", "finops_platform")
 
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&multiStatements=true",
