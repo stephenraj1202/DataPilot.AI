@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import {
   Bell, Moon, Sun, LogOut, ChevronDown, User, Key, Eye, EyeOff,
   Copy, Check, Plus, Trash2, Clock, Mail, Shield, X, Zap,
+  PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import { useTheme } from '../../context/ThemeContext'
 import { useAuth } from '../../context/AuthContext'
@@ -10,7 +11,9 @@ import api from '../../services/api'
 import Logo from './Logo'
 
 interface NavbarProps {
-  onMenuToggle?: () => void
+  onMobileMenuToggle?: () => void
+  onSidebarToggle?: () => void
+  sidebarCollapsed?: boolean
 }
 
 function getInitials(name?: string): string {
@@ -372,7 +375,7 @@ function UserDropdown({ user, avatarGradient, initials, fullName, roleLabel, onC
 
 // ── Navbar ───────────────────────────────────────────────────────────────────
 
-export default function Navbar({ onMenuToggle }: NavbarProps) {
+export default function Navbar({ onMobileMenuToggle, onSidebarToggle, sidebarCollapsed }: NavbarProps) {
   const { theme, toggleTheme } = useTheme()
   const { user, logout } = useAuth()
   const [dropOpen, setDropOpen] = useState(false)
@@ -405,9 +408,10 @@ export default function Navbar({ onMenuToggle }: NavbarProps) {
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-gray-200 bg-white/95 backdrop-blur px-4 dark:border-gray-700/60 dark:bg-gray-900/95 md:px-6">
 
       {/* Left */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
+        {/* Mobile hamburger */}
         <button
-          onClick={onMenuToggle}
+          onClick={onMobileMenuToggle}
           className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 md:hidden transition-colors"
           aria-label="Toggle menu"
         >
@@ -415,6 +419,20 @@ export default function Navbar({ onMenuToggle }: NavbarProps) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
+
+        {/* Desktop sidebar collapse toggle */}
+        <button
+          onClick={onSidebarToggle}
+          className="hidden md:flex rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {sidebarCollapsed
+            ? <PanelLeftOpen className="h-[18px] w-[18px]" />
+            : <PanelLeftClose className="h-[18px] w-[18px]" />
+          }
+        </button>
+
         <span className="hidden md:block">
           <Logo size={28} />
         </span>

@@ -19,6 +19,7 @@ const BillingPage = lazy(() => import('./pages/BillingPage'))
 const BillingSuccessPage = lazy(() => import('./pages/BillingSuccessPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const UBBPage = lazy(() => import('./pages/UBBPage'))
+const DocsPage = lazy(() => import('./pages/DocsPage'))
 const TermsPage = lazy(() => import('./pages/TermsPage'))
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'))
 
@@ -56,6 +57,7 @@ export default function App() {
                   <Route path="/billing/success" element={<BillingSuccessPage />} />
                   <Route path="/billing/ubb" element={<UBBPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/docs" element={<DocsPage />} />
                 </Route>
               </Route>
 
