@@ -78,7 +78,12 @@ func main() {
 		CancelURL:  cfg.Stripe.CancelURL,
 		Cfg:        cfg,
 	}
-	ubbHandler := &handlers.UBBHandler{DB: db.DB, PaymentMode: cfg.Payment.Mode}
+	ubbHandler := &handlers.UBBHandler{
+		DB:                db.DB,
+		PaymentMode:       cfg.Payment.Mode,
+		RazorpayKeyID:     cfg.Razorpay.KeyID,
+		RazorpayKeySecret: cfg.Razorpay.KeySecret,
+	}
 
 	// Ensure UBB tables exist
 	if err := handlers.EnsureUBBTable(db.DB); err != nil {
@@ -146,6 +151,7 @@ func main() {
 		billing.POST("/razorpay/verify", razorpayHandler.VerifyRazorpayPayment)
 		billing.POST("/razorpay/webhook", razorpayHandler.HandleRazorpayWebhook)
 		billing.GET("/razorpay/payments", razorpayHandler.GetRazorpayPayments)
+		billing.POST("/razorpay/ubb/verify", razorpayHandler.VerifyUBBOveragePayment)
 
 		// Usage-Based Billing (UBB)
 		billing.POST("/ubb/streams", ubbHandler.CreateStream)

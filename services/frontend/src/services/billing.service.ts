@@ -121,6 +121,16 @@ export const billingService = {
     return data
   },
 
+  async verifyUBBOveragePayment(payload: {
+    razorpay_order_id: string
+    razorpay_payment_id: string
+    razorpay_signature: string
+    amount_paise: number
+  }): Promise<{ paid: boolean; payment_id: string }> {
+    const { data } = await api.post('/api/billing/razorpay/ubb/verify', payload)
+    return data
+  },
+
   async getNextBillSummary(): Promise<{
     plan_name: string
     billing_period: string

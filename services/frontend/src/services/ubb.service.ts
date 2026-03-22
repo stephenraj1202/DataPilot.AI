@@ -73,7 +73,14 @@ export interface PayInvoiceResult {
   pdf_url?: string
   total_usd: number
   status?: string
-  message: string
+  message?: string
+  // Razorpay UBB overage fields
+  razorpay?: boolean
+  order_id?: string
+  amount?: number   // paise
+  currency?: string
+  key_id?: string
+  description?: string
 }
 
 export const ubbService = {

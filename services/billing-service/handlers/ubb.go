@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	razorpay "github.com/razorpay/razorpay-go"
 	stripe "github.com/stripe/stripe-go/v76"
 	"github.com/stripe/stripe-go/v76/invoice"
 	"github.com/stripe/stripe-go/v76/invoiceitem"
@@ -22,8 +23,10 @@ import (
 
 // UBBHandler handles Usage-Based Billing streams and meter events.
 type UBBHandler struct {
-	DB          *sql.DB
-	PaymentMode string // "stripe" or "razorpay"
+	DB                *sql.DB
+	PaymentMode       string // "stripe" or "razorpay"
+	RazorpayKeyID     string
+	RazorpayKeySecret string
 }
 
 // isRazorpay returns true when the payment mode is razorpay.
@@ -1129,12 +1132,44 @@ func (h *UBBHandler) PayUBBInvoice(c *gin.Context) {
 		return
 	}
 
-	// ── Razorpay mode: create a payment link ──────────────────────────────────
+	// ── Razorpay mode: create a one-time order for the overage amount ────────
 	if h.isRazorpay() {
+		// Get Razorpay credentials from the handler (passed via RazorpayKeyID/Secret on UBBHandler)
+		if h.RazorpayKeyID == "" {
+			c.JSON(http.StatusOK, gin.H{
+				"paid":      false,
+				"total_usd": float64(totalOverageCents) / 100.0,
+				"message":   fmt.Sprintf("Usage overage of ₹%.2f — configure Razorpay credentials to enable auto-pay", float64(totalOverageCents)/100.0),
+			})
+			return
+		}
+
+		client := razorpay.NewClient(h.RazorpayKeyID, h.RazorpayKeySecret)
+		orderData := map[string]interface{}{
+			"amount":   totalOverageCents, // paise
+			"currency": "INR",
+			"receipt":  fmt.Sprintf("ubb_%s_%d", accountID[:8], now.Unix()),
+			"notes": map[string]interface{}{
+				"account_id": accountID,
+				"type":       "ubb_overage",
+				"period":     fmt.Sprintf("%s %d", now.Month().String(), now.Year()),
+			},
+		}
+		order, err := client.Order.Create(orderData, nil)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create Razorpay order: " + err.Error()})
+			return
+		}
+		orderID, _ := order["id"].(string)
 		c.JSON(http.StatusOK, gin.H{
-			"paid":      false,
-			"total_usd": float64(totalOverageCents) / 100.0,
-			"message":   fmt.Sprintf("Usage overage of ₹%.2f — contact support or pay via your Razorpay dashboard", float64(totalOverageCents)/100.0),
+			"paid":        false,
+			"razorpay":    true,
+			"order_id":    orderID,
+			"amount":      totalOverageCents,
+			"currency":    "INR",
+			"key_id":      h.RazorpayKeyID,
+			"total_usd":   float64(totalOverageCents) / 100.0,
+			"description": fmt.Sprintf("UBB overage — %s %d", now.Month().String(), now.Year()),
 		})
 		return
 	}

@@ -6,6 +6,7 @@ import {
   ExternalLink, TrendingUp,
 } from 'lucide-react'
 import { ubbService, type UBBStream, type DryRunInvoice } from '../services/ubb.service'
+import { billingService } from '../services/billing.service'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import ConfirmModal from '../components/common/ConfirmModal'
 import toast from 'react-hot-toast'
@@ -264,12 +265,15 @@ function StreamCard({ stream, onDelete, onRefresh }: { stream: UBBStream; onDele
 // ── Invoice Preview Panel ─────────────────────────────────────────────────────
 function InvoicePreviewPanel() {
   const qc = useQueryClient()
+  const { mode: payMode } = usePaymentMode()
   const [dryRunTriggered, setDryRunTriggered] = useState(false)
+  const [rzpLoading, setRzpLoading] = useState(false)
 
   const { data: previewData, isLoading: previewLoading } = useQuery({
     queryKey: ['ubb-invoice-preview'],
     queryFn: () => ubbService.previewInvoice(),
     staleTime: 0,
+    enabled: payMode !== 'razorpay',
   })
 
   const { data: dryRun, isLoading: dryRunLoading, refetch: refetchDryRun } = useQuery({
@@ -281,8 +285,38 @@ function InvoicePreviewPanel() {
 
   const payMut = useMutation({
     mutationFn: () => ubbService.payInvoice(),
-    onSuccess: (res) => {
-      if (res.paid) {
+    onSuccess: async (res) => {
+      if (res.razorpay && res.order_id) {
+        // Open Razorpay checkout for UBB overage
+        const rzp = new (window as any).Razorpay({
+          key: res.key_id,
+          order_id: res.order_id,
+          amount: res.amount,
+          currency: res.currency ?? 'INR',
+          name: 'DataPilot.AI',
+          description: res.description ?? 'UBB overage charges',
+          handler: async (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+            setRzpLoading(true)
+            try {
+              await billingService.verifyUBBOveragePayment({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                amount_paise: res.amount ?? 0,
+              })
+              toast.success(`UBB overage paid — ₹${(res.amount ?? 0) / 100} charged`)
+              qc.invalidateQueries({ queryKey: ['ubb-invoice-dryrun'] })
+              qc.invalidateQueries({ queryKey: ['razorpay-payments'] })
+            } catch {
+              toast.error('Payment verification failed')
+            } finally {
+              setRzpLoading(false)
+            }
+          },
+          modal: { ondismiss: () => setRzpLoading(false) },
+        })
+        rzp.open()
+      } else if (res.paid) {
         toast.success(`Payment successful — ₹${res.total_usd.toFixed(2)} charged`)
       } else if (res.invoice_url) {
         toast.error('Auto-charge failed — opening invoice')
@@ -417,10 +451,10 @@ function InvoicePreviewPanel() {
                 )}
               </div>
             ) : (
-              <button onClick={() => payMut.mutate()} disabled={payMut.isPending || dryRun.total_usd <= dryRun.flat_fee_usd}
+              <button onClick={() => payMut.mutate()} disabled={payMut.isPending || rzpLoading || dryRun.total_usd <= dryRun.flat_fee_usd}
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-40 transition-all">
-                {payMut.isPending ? <LoadingSpinner size="sm" /> : <CreditCard className="h-4 w-4" />}
-                {payMut.isPending ? 'Processing…' : `Pay ₹${dryRun.total_usd.toFixed(2)}`}
+                {(payMut.isPending || rzpLoading) ? <LoadingSpinner size="sm" /> : <CreditCard className="h-4 w-4" />}
+                {(payMut.isPending || rzpLoading) ? 'Processing…' : `Pay ₹${dryRun.overage_usd.toFixed(2)} overage`}
               </button>
             )}
           </div>
@@ -515,7 +549,7 @@ export default function UBBPage() {
 
         <div className="space-y-4">
           <h2 className="text-sm font-bold text-gray-700 dark:text-gray-300">Invoice Preview</h2>
-          {payMode !== 'razorpay' && <InvoicePreviewPanel />}
+          <InvoicePreviewPanel />
 
           <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 space-y-3">
             <p className="text-xs font-bold text-gray-700 dark:text-gray-300">How it works</p>

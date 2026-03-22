@@ -473,3 +473,63 @@ func (h *RazorpayCheckoutHandler) handleSubscriptionCancelled(event map[string]i
 	)
 	log.Printf("[razorpay] Subscription %s cancelled", subID)
 }
+
+// VerifyUBBOveragePayment verifies a one-time Razorpay order payment for UBB overage.
+// POST /billing/razorpay/ubb/verify
+func (h *RazorpayCheckoutHandler) VerifyUBBOveragePayment(c *gin.Context) {
+	accountID := c.GetHeader("X-Account-ID")
+	if accountID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "account_id required"})
+		return
+	}
+
+	var req struct {
+		OrderID     string `json:"razorpay_order_id" binding:"required"`
+		PaymentID   string `json:"razorpay_payment_id" binding:"required"`
+		Signature   string `json:"razorpay_signature" binding:"required"`
+		AmountPaise int64  `json:"amount_paise"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Verify HMAC: order_id|payment_id
+	mac := hmac.New(sha256.New, []byte(h.KeySecret))
+	mac.Write([]byte(req.OrderID + "|" + req.PaymentID))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if expected != req.Signature {
+		// Fallback: fetch payment from API
+		client := razorpay.NewClient(h.KeyID, h.KeySecret)
+		payment, err := client.Payment.Fetch(req.PaymentID, nil, nil)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "payment verification failed"})
+			return
+		}
+		status, _ := payment["status"].(string)
+		if status != "captured" && status != "authorized" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "payment not captured"})
+			return
+		}
+	}
+
+	// Record the payment in stripe_invoices
+	_, _ = h.DB.Exec(
+		`INSERT INTO stripe_invoices
+		 (id, account_id, stripe_invoice_id, amount_cents, currency, status, created_at)
+		 VALUES (?, ?, ?, ?, 'INR', 'paid', NOW())`,
+		uuid.New().String(), accountID, req.PaymentID, req.AmountPaise,
+	)
+
+	// Mark billed revenue as invoiced for this period
+	now := time.Now()
+	billingPeriod := fmt.Sprintf("%d-%02d", now.Year(), int(now.Month()))
+	_, _ = h.DB.Exec(
+		`UPDATE ubb_billed_revenue SET stripe_invoiced=1, stripe_invoice_id=?
+		 WHERE account_id=? AND billing_period=? AND stripe_invoiced=0`,
+		req.PaymentID, accountID, billingPeriod,
+	)
+
+	log.Printf("[razorpay] UBB overage paid: payment=%s account=%s amount=%d paise", req.PaymentID, accountID, req.AmountPaise)
+	c.JSON(http.StatusOK, gin.H{"paid": true, "payment_id": req.PaymentID})
+}
