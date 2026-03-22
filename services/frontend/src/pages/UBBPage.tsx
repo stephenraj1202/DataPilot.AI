@@ -417,11 +417,16 @@ function InvoicePreviewPanel() {
                 <div key={i} className="py-2 space-y-0.5">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-[11px] text-gray-700 dark:text-gray-300 flex-1">{l.description}</span>
-                    <span className="text-[11px] font-bold flex-shrink-0 text-gray-800 dark:text-white">₹{l.amount_usd.toFixed(4)}</span>
+                    <span className="text-[11px] font-bold flex-shrink-0 text-gray-800 dark:text-white">₹{l.amount_usd.toFixed(2)}</span>
                   </div>
-                  {l.units > 0 && (
+                  {l.overage_units > 0 && (
                     <p className="text-[10px] text-gray-400">
-                      {l.units.toLocaleString()} units × ₹{(l.amount_usd / Math.max(l.units, 1)).toFixed(6)}/unit
+                      {l.units.toLocaleString()} total · {l.included_units.toLocaleString()} free · {l.overage_units.toLocaleString()} billed
+                    </p>
+                  )}
+                  {l.units > 0 && l.overage_units === 0 && l.included_units > 0 && (
+                    <p className="text-[10px] text-emerald-500">
+                      {l.units.toLocaleString()} units — within free tier ({l.included_units.toLocaleString()} included)
                     </p>
                   )}
                 </div>
@@ -481,7 +486,7 @@ export default function UBBPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white">Usage-Based Billing</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white">Usage-Based Billing <span className="ml-2 rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400">Under Development</span></h1>
           <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
             Post usage events · billed per unit via {payLabel} · invoiced at period end
           </p>

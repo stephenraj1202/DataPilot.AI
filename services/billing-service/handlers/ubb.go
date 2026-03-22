@@ -311,8 +311,12 @@ func (h *UBBHandler) DeleteStream(c *gin.Context) {
 		// Stripe stream: all units billed at sub_item_price_cents
 		billedCents = totalUnits * subItemPriceCents
 	} else {
-		// Local stream: all units billed at overage_price_cents (no free-tier)
-		billedCents = totalUnits * overagePriceCents
+		// Local/Razorpay stream: apply free tier — only charge units above included_units
+		overageUnits := int64(0)
+		if totalUnits > includedUnits {
+			overageUnits = totalUnits - includedUnits
+		}
+		billedCents = overageUnits * overagePriceCents
 	}
 	now := time.Now()
 	billingPeriod := fmt.Sprintf("%d-%02d", now.Year(), int(now.Month()))
@@ -900,9 +904,11 @@ func (h *UBBHandler) DryRunInvoice(c *gin.Context) {
 			billedCents = usage * s.SubItemPriceCents
 			overageUnits = usage
 		} else {
-			// Local: all units billed at overage_price_cents (no free-tier deduction)
-			billedCents = usage * s.OveragePriceCents
-			overageUnits = usage
+			// Local/Razorpay: apply free tier — only charge units above included_units
+			if usage > s.IncludedUnits {
+				overageUnits = usage - s.IncludedUnits
+			}
+			billedCents = overageUnits * s.OveragePriceCents
 		}
 		totalOverageCents += billedCents
 
@@ -1013,8 +1019,12 @@ func (h *UBBHandler) GetNextBillSummary(c *gin.Context) {
 			if source == "stripe" {
 				activeOverageCents += usage * subItemPriceCents
 			} else {
-				// Local: all units billed at overage_price_cents (no free-tier deduction)
-				activeOverageCents += usage * priceCents
+				// Local/Razorpay: apply free tier — only charge units above included_units
+				overage := int64(0)
+				if usage > included {
+					overage = usage - included
+				}
+				activeOverageCents += overage * priceCents
 			}
 		}
 	}
